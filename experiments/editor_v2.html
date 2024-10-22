@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL Text Editor with Blinking Caret</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            outline: none;
+            background: transparent;
+            color: transparent;
+            caret-color: transparent; /* Hide the default caret */
+            resize: none;
+            overflow: hidden;
+            font: 24px monospace; /* Ensure consistent font */
+        }
+    </style>
+</head>
+<body>
+<canvas id="glCanvas"></canvas>
+<!-- Invisible textarea to capture keyboard input -->
+<textarea id="overlay" autofocus></textarea>
+
+<script>
+// Get the WebGL canvas and set its size
+const canvas = document.getElementById('glCanvas');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+resizeCanvas();
+
+window.addEventListener('resize', resizeCanvas);
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    drawScene();
+}
+
+// Offscreen canvas for text rendering
+const textCanvas = document.createElement('canvas');
+const textCtx = textCanvas.getContext('2d');
+textCanvas.width = 512;
+textCanvas.height = 512;
+
+// Initialize text
+let textContent = '';
+let cursorPosition = 0; // Character index
+let caretVisible = true;
+
+// Function to get cursor coordinates
+function getCursorCoordinates() {
+    const lines = textContent.substring(0, cursorPosition).split('\n');
+    const currentLine = lines.length - 1;
+    const column = lines[lines.length - 1].length;
+
+    const lineHeight = 30; // Must match the rendering
+    const charWidth = textCtx.measureText('M').width; // Approximate width per character
+    const x = 10 + column * charWidth;
+    const y = 10 + currentLine * lineHeight;
+
+    return { x, y };
+}
+
+// Function to render text and caret onto the offscreen canvas
+function renderText() {
+    // Clear the canvas
+    textCtx.fillStyle = 'white';
+    textCtx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+
+    // Draw the text
+    textCtx.fillStyle = 'black';
+    textCtx.font = '24px monospace';
+    textCtx.textBaseline = 'top';
+
+    const lines = textContent.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        textCtx.fillText(lines[i], 10, 10 + i * 30);
+    }
+
+    // Draw the caret if visible
+    if (caretVisible) {
+        const { x, y } = getCursorCoordinates();
+        textCtx.beginPath();
+        textCtx.moveTo(x, y);
+        textCtx.lineTo(x, y + 24); // 24px height matching font size
+        textCtx.strokeStyle = 'black';
+        textCtx.lineWidth = 2;
+        textCtx.stroke();
+    }
+}
+
+// Initial render
+renderText();
+
+// Create texture
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+// Set the parameters so we can render any size image
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+// Upload initial texture
+gl.texImage2D(
+    gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    textCanvas
+);
+
+// Vertex shader source
+const vertexShaderSrc = `
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    varying vec2 v_texCoord;
+    void main(){
+        gl_Position = vec4(a_position, 0, 1);
+        v_texCoord = a_texCoord;
+    }
+`;
+
+// Fragment shader source
+const fragmentShaderSrc = `
+    precision mediump float;
+    varying vec2 v_texCoord;
+    uniform sampler2D u_texture;
+    void main(){
+        gl_FragColor = texture2D(u_texture, v_texCoord);
+    }
+`;
+
+// Compile shader
+function compileShader(gl, shaderSource, shaderType){
+    const shader = gl.createShader(shaderType);
+    gl.shaderSource(shader, shaderSource);
+    gl.compileShader(shader);
+    const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    if(!success){
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
+}
+
+// Link program
+function createProgram(gl, vertexSrc, fragmentSrc){
+    const vertexShader = compileShader(gl, vertexSrc, gl.VERTEX_SHADER);
+    const fragmentShader = compileShader(gl, fragmentSrc, gl.FRAGMENT_SHADER);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+    if(!success){
+        console.error(gl.getProgramInfoLog(program));
+        gl.deleteProgram(program);
+        return null;
+    }
+    return program;
+}
+
+const program = createProgram(gl, vertexShaderSrc, fragmentShaderSrc);
+gl.useProgram(program);
+
+// Look up where the vertex data needs to go.
+const positionLocation = gl.getAttribLocation(program, 'a_position');
+const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+
+// Lookup uniforms
+const textureLocation = gl.getUniformLocation(program, 'u_texture');
+
+// Create buffer for positions (two triangles to cover the screen)
+const positionBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+const positions = new Float32Array([
+    -1, -1, // bottom left
+     1, -1, // bottom right
+    -1,  1, // top left
+    -1,  1, // top left
+     1, -1, // bottom right
+     1,  1, // top right
+]);
+gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+// Create buffer for texture coordinates
+const texCoordBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+const texCoords = new Float32Array([
+    0, 1, // bottom left
+    1, 1, // bottom right
+    0, 0, // top left
+    0, 0, // top left
+    1, 1, // bottom right
+    1, 0, // top right
+]);
+gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+// Enable the position attribute
+gl.enableVertexAttribArray(positionLocation);
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+gl.vertexAttribPointer(
+    positionLocation,
+    2,          // size
+    gl.FLOAT,   // type
+    false,      // normalize
+    0,          // stride
+    0           // offset
+);
+
+// Enable the texture coordinate attribute
+gl.enableVertexAttribArray(texCoordLocation);
+gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+gl.vertexAttribPointer(
+    texCoordLocation,
+    2,          // size
+    gl.FLOAT,   // type
+    false,      // normalize
+    0,          // stride
+    0           // offset
+);
+
+// Function to draw the scene
+function drawScene(){
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Draw the rectangle
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+// Initial draw
+drawScene();
+
+// Handle user input
+const overlay = document.getElementById('overlay');
+
+// Prevent default behaviors that interfere with our custom handling
+overlay.addEventListener('keydown', (e) => {
+    const key = e.key;
+    if (['ArrowLeft', 'ArrowRight', 'Backspace', 'Delete'].includes(key)) {
+        e.preventDefault();
+    }
+
+    if (key === 'Backspace') {
+        if (cursorPosition > 0) {
+            textContent = textContent.slice(0, cursorPosition - 1) + textContent.slice(cursorPosition);
+            cursorPosition--;
+            updateTextarea();
+            renderAndUpdate();
+        }
+    } else if (key === 'Delete') {
+        if (cursorPosition < textContent.length) {
+            textContent = textContent.slice(0, cursorPosition) + textContent.slice(cursorPosition + 1);
+            updateTextarea();
+            renderAndUpdate();
+        }
+    } else if (key === 'ArrowLeft') {
+        if (cursorPosition > 0) {
+            cursorPosition--;
+            updateTextarea();
+            renderAndUpdate();
+        }
+    } else if (key === 'ArrowRight') {
+        if (cursorPosition < textContent.length) {
+            cursorPosition++;
+            updateTextarea();
+            renderAndUpdate();
+        }
+    }
+    // Allow default behavior for other keys (handled by 'input' event)
+});
+
+// Handle text input
+overlay.addEventListener('input', (e) => {
+    const newValue = e.target.value;
+    const selectionStart = e.target.selectionStart;
+    const selectionEnd = e.target.selectionEnd;
+
+    // Calculate the difference
+    const diff = newValue.length - textContent.length;
+
+    if (diff > 0) {
+        // Text was added
+        const addedText = newValue.substring(selectionStart - diff, selectionStart);
+        textContent = textContent.slice(0, selectionStart - diff) + addedText + textContent.slice(selectionStart - diff);
+        cursorPosition = selectionStart;
+    } else if (diff < 0) {
+        // Text was removed (handled by 'keydown', so no action needed here)
+        // To prevent duplication, we won't modify 'textContent' here
+        // Instead, rely on 'keydown' to handle deletions
+    } else {
+        // Replacement or no change
+        textContent = newValue;
+        cursorPosition = selectionStart;
+    }
+
+    renderAndUpdate();
+});
+
+// Function to update the textarea's value and cursor position
+function updateTextarea() {
+    overlay.value = textContent;
+    overlay.selectionStart = cursorPosition;
+    overlay.selectionEnd = cursorPosition;
+}
+
+// Function to render text, update texture, and draw scene
+function renderAndUpdate() {
+    renderText();
+
+    // Update the texture with the new text
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(
+        gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        textCanvas
+    );
+
+    drawScene();
+}
+
+// Blinking caret implementation
+setInterval(() => {
+    caretVisible = !caretVisible;
+    renderAndUpdate();
+}, 500); // Toggle every 500ms
+
+// Prevent scrolling with arrow keys when focused
+overlay.addEventListener('keydown', (e) => {
+    if(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)){
+        e.preventDefault();
+    }
+});
+
+// Initialize the overlay textarea
+overlay.value = textContent;
+overlay.selectionStart = cursorPosition;
+overlay.selectionEnd = cursorPosition;
+</script>
+</body>
+</html>

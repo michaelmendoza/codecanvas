@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Canvas-Based WebGL Text Editor</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        /* Make the canvas focusable */
+        canvas:focus {
+            outline: none;
+        }
+    </style>
+</head>
+<body>
+<canvas id="glCanvas" tabindex="0"></canvas>
+
+<script>
+/**
+ * Canvas-Based WebGL Text Editor
+ * 
+ * Features:
+ * - Responsive resizing with correct aspect ratio.
+ * - Text rendering using an offscreen 2D canvas as a WebGL texture.
+ * - Blinking caret (cursor).
+ * - Mouse interaction for moving the caret and selecting text.
+ * - Text highlighting for selection.
+ * - Handling of special keys like Tab, Enter, Backspace, Delete, and Arrow keys.
+ */
+
+// ========================= Initialization =========================
+
+// Get the WebGL canvas and set its size
+const canvas = document.getElementById('glCanvas');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+
+// Ensure WebGL is available
+if (!gl) {
+    alert("WebGL not supported, please use a different browser.");
+}
+
+// Offscreen canvas for text rendering
+let textCanvas = document.createElement('canvas');
+let textCtx = textCanvas.getContext('2d');
+
+// Initial setup
+initializeCanvases();
+
+// Variables for text management
+let lines = ['']; // Array of text lines
+let cursor = { line: 0, ch: 0 }; // Cursor position
+let selection = null; // { start: {line, ch}, end: {line, ch} }
+let desiredColumn = 0; // For vertical cursor movements
+
+// Blinking caret
+let caretVisible = true;
+const blinkInterval = 500; // milliseconds
+
+// Mouse selection state
+let isSelecting = false;
+let selectionStart = null;
+
+// ========================= WebGL Setup =========================
+
+// Create and compile shader programs
+const vertexShaderSrc = `
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    varying vec2 v_texCoord;
+    void main(){
+        gl_Position = vec4(a_position, 0, 1);
+        v_texCoord = a_texCoord;
+    }
+`;
+
+const fragmentShaderSrc = `
+    precision mediump float;
+    varying vec2 v_texCoord;
+    uniform sampler2D u_texture;
+    void main(){
+        gl_FragColor = texture2D(u_texture, v_texCoord);
+    }
+`;
+
+// Function to compile shader
+function compileShader(gl, shaderSource, shaderType){
+    const shader = gl.createShader(shaderType);
+    gl.shaderSource(shader, shaderSource);
+    gl.compileShader(shader);
+    const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    if(!success){
+        console.error('Shader compilation failed:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+    }
+    return shader;
+}
+
+// Function to create shader program
+function createProgram(gl, vertexSrc, fragmentSrc){
+    const vertexShader = compileShader(gl, vertexSrc, gl.VERTEX_SHADER);
+    const fragmentShader = compileShader(gl, fragmentSrc, gl.FRAGMENT_SHADER);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+    if(!success){
+        console.error('Program linking failed:', gl.getProgramInfoLog(program));
+        gl.deleteProgram(program);
+        return null;
+    }
+    return program;
+}
+
+const program = createProgram(gl, vertexShaderSrc, fragmentShaderSrc);
+gl.useProgram(program);
+
+// Look up attribute locations
+const positionLocation = gl.getAttribLocation(program, 'a_position');
+const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+
+// Look up uniform locations
+const textureLocation = gl.getUniformLocation(program, 'u_texture');
+
+// Create buffers
+const positionBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+const positions = new Float32Array([
+    -1, -1, // Bottom-left
+     1, -1, // Bottom-right
+    -1,  1, // Top-left
+    -1,  1, // Top-left
+     1, -1, // Bottom-right
+     1,  1, // Top-right
+]);
+gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+const texCoordBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+const texCoords = new Float32Array([
+    0, 1, // Bottom-left
+    1, 1, // Bottom-right
+    0, 0, // Top-left
+    0, 0, // Top-left
+    1, 1, // Bottom-right
+    1, 0, // Top-right
+]);
+gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+// Enable attributes
+gl.enableVertexAttribArray(positionLocation);
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+gl.vertexAttribPointer(
+    positionLocation,
+    2,          // size
+    gl.FLOAT,   // type
+    false,      // normalize
+    0,          // stride
+    0           // offset
+);
+
+gl.enableVertexAttribArray(texCoordLocation);
+gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+gl.vertexAttribPointer(
+    texCoordLocation,
+    2,          // size
+    gl.FLOAT,   // type
+    false,      // normalize
+    0,          // stride
+    0           // offset
+);
+
+// Create texture
+const texture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, texture);
+// Set texture parameters
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+// Initial texture upload
+updateTexture();
+
+// ========================= Rendering =========================
+
+// Function to render text and caret onto the offscreen canvas
+function renderTextCanvas() {
+    // Clear the canvas
+    textCtx.fillStyle = 'white';
+    textCtx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+
+    // Draw selection background if any
+    if (selection) {
+        const { start, end } = normalizeSelection(selection);
+        for (let i = start.line; i <= end.line; i++) {
+            const lineText = lines[i];
+            const startCh = i === start.line ? start.ch : 0;
+            const endCh = i === end.line ? end.ch : lineText.length;
+            const selectedText = lineText.substring(startCh, endCh);
+            const charWidth = textCtx.measureText('M').width;
+            const x = 10 + startCh * charWidth;
+            const y = 10 + i * 30;
+            const width = textCtx.measureText(selectedText).width;
+            const height = 24; // Font size
+
+            textCtx.fillStyle = 'rgba(173, 216, 230, 0.5)'; // Light blue
+            textCtx.fillRect(x, y, width, height);
+        }
+    }
+
+    // Draw the text
+    textCtx.fillStyle = 'black';
+    textCtx.font = '24px monospace';
+    textCtx.textBaseline = 'top';
+
+    for (let i = 0; i < lines.length; i++) {
+        textCtx.fillText(lines[i], 10, 10 + i * 30);
+    }
+
+    // Draw the caret if visible
+    if (caretVisible) {
+        const { x, y } = getCaretCoordinates();
+        textCtx.beginPath();
+        textCtx.moveTo(x, y);
+        textCtx.lineTo(x, y + 24); // 24px height matching font size
+        textCtx.strokeStyle = 'black';
+        textCtx.lineWidth = 2;
+        textCtx.stroke();
+    }
+}
+
+// Function to normalize selection (start before end)
+function normalizeSelection(sel) {
+    if (sel.start.line < sel.end.line || 
+        (sel.start.line === sel.end.line && sel.start.ch <= sel.end.ch)) {
+        return sel;
+    } else {
+        return { start: sel.end, end: sel.start };
+    }
+}
+
+// Function to get caret coordinates
+function getCaretCoordinates() {
+    const { line, ch } = cursor;
+    const lineText = lines[line];
+    const charWidth = textCtx.measureText('M').width; // Monospace: all characters have same width
+    const x = 10 + ch * charWidth;
+    const y = 10 + line * 30;
+    return { x, y };
+}
+
+// Function to update the texture from the offscreen canvas
+function updateTexture() {
+    textCtx.font = '24px monospace'; // Ensure font is set
+    textCtx.textBaseline = 'top';
+    renderTextCanvas();
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(
+        gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        textCanvas
+    );
+}
+
+// Function to draw the WebGL scene
+function drawScene() {
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.uniform1i(textureLocation, 0); // Texture unit 0
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+// Function to render and draw
+function renderAndDraw() {
+    updateTexture();
+    drawScene();
+}
+
+// Initial render
+renderAndDraw();
+
+// ========================= Event Handling =========================
+
+// Make the canvas focusable and focus it
+canvas.setAttribute('tabindex', '0');
+canvas.focus();
+
+// Handle keyboard events
+canvas.addEventListener('keydown', (e) => {
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+        // Insert character
+        insertText(e.key);
+        e.preventDefault();
+    } else if (e.key === 'Backspace') {
+        deleteCharacter(false);
+        e.preventDefault();
+    } else if (e.key === 'Delete') {
+        deleteCharacter(true);
+        e.preventDefault();
+    } else if (e.key === 'Enter') {
+        insertNewLine();
+        e.preventDefault();
+    } else if (e.key === 'Tab') {
+        insertText('    '); // Insert four spaces
+        e.preventDefault();
+    } else if (e.key === 'ArrowLeft') {
+        moveCursorLeft();
+        e.preventDefault();
+    } else if (e.key === 'ArrowRight') {
+        moveCursorRight();
+        e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+        moveCursorUp();
+        e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+        moveCursorDown();
+        e.preventDefault();
+    } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd + A: Select all
+        selectAll();
+        e.preventDefault();
+    } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd + C: Copy (not implemented)
+        // Future enhancement
+        e.preventDefault();
+    } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd + V: Paste (not implemented)
+        // Future enhancement
+        e.preventDefault();
+    }
+});
+
+// Handle mouse events for cursor positioning and text selection
+canvas.addEventListener('mousedown', (e) => {
+    const pos = getMousePosition(e);
+    const newCursor = getCursorFromPosition(pos.x, pos.y);
+    cursor = newCursor;
+    selection = { start: { ...cursor }, end: { ...cursor } };
+    isSelecting = true;
+    desiredColumn = cursor.ch;
+    renderAndDraw();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (isSelecting) {
+        const pos = getMousePosition(e);
+        const newCursor = getCursorFromPosition(pos.x, pos.y);
+        cursor = newCursor;
+        selection.end = { ...cursor };
+        desiredColumn = cursor.ch;
+        renderAndDraw();
+    }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (isSelecting) {
+        isSelecting = false;
+        // If selection start and end are the same, remove selection
+        if (selection.start.line === selection.end.line && selection.start.ch === selection.end.ch) {
+            selection = null;
+        }
+        renderAndDraw();
+    }
+});
+
+canvas.addEventListener('mouseleave', (e) => {
+    if (isSelecting) {
+        isSelecting = false;
+        // If selection start and end are the same, remove selection
+        if (selection.start.line === selection.end.line && selection.start.ch === selection.end.ch) {
+            selection = null;
+        }
+        renderAndDraw();
+    }
+});
+
+// Prevent default drag behavior
+canvas.addEventListener('dragstart', (e) => {
+    e.preventDefault();
+});
+
+// ========================= Text Manipulation Functions =========================
+
+/**
+ * Inserts text at the current cursor position, replacing the selection if any.
+ * @param {string} text 
+ */
+function insertText(text) {
+    if (selection) {
+        deleteSelection();
+    }
+    const line = lines[cursor.line];
+    const before = line.substring(0, cursor.ch);
+    const after = line.substring(cursor.ch);
+    lines[cursor.line] = before + text + after;
+    cursor.ch += text.length;
+    desiredColumn = cursor.ch;
+    renderAndDraw();
+}
+
+/**
+ * Inserts a new line at the current cursor position, splitting the current line.
+ */
+function insertNewLine() {
+    if (selection) {
+        deleteSelection();
+    }
+    const line = lines[cursor.line];
+    const before = line.substring(0, cursor.ch);
+    const after = line.substring(cursor.ch);
+    lines[cursor.line] = before;
+    lines.splice(cursor.line + 1, 0, after);
+    cursor.line += 1;
+    cursor.ch = 0;
+    desiredColumn = cursor.ch;
+    renderAndDraw();
+}
+
+/**
+ * Deletes a character before or after the cursor.
+ * @param {boolean} forward - If true, delete after the cursor (Delete key). If false, delete before (Backspace key).
+ */
+function deleteCharacter(forward) {
+    if (selection) {
+        deleteSelection();
+        return;
+    }
+    if (forward) {
+        // Delete character after the cursor
+        const line = lines[cursor.line];
+        if (cursor.ch < line.length) {
+            lines[cursor.line] = line.substring(0, cursor.ch) + line.substring(cursor.ch + 1);
+        } else if (cursor.line < lines.length - 1) {
+            // Merge with next line
+            lines[cursor.line] += lines[cursor.line + 1];
+            lines.splice(cursor.line + 1, 1);
+        }
+    } else {
+        // Delete character before the cursor
+        if (cursor.ch > 0) {
+            const line = lines[cursor.line];
+            lines[cursor.line] = line.substring(0, cursor.ch - 1) + line.substring(cursor.ch);
+            cursor.ch -= 1;
+            desiredColumn = cursor.ch;
+        } else if (cursor.line > 0) {
+            // Merge with previous line
+            const prevLine = lines[cursor.line - 1];
+            const currentLine = lines[cursor.line];
+            cursor.ch = prevLine.length;
+            lines[cursor.line - 1] = prevLine + currentLine;
+            lines.splice(cursor.line, 1);
+            cursor.line -= 1;
+            desiredColumn = cursor.ch;
+        }
+    }
+    renderAndDraw();
+}
+
+/**
+ * Deletes the currently selected text.
+ */
+function deleteSelection() {
+    const { start, end } = normalizeSelection(selection);
+    if (start.line === end.line) {
+        const line = lines[start.line];
+        lines[start.line] = line.substring(0, start.ch) + line.substring(end.ch);
+    } else {
+        const firstLine = lines[start.line].substring(0, start.ch);
+        const lastLine = lines[end.line].substring(end.ch);
+        lines[start.line] = firstLine + lastLine;
+        lines.splice(start.line + 1, end.line - start.line);
+    }
+    cursor = { ...start };
+    selection = null;
+    desiredColumn = cursor.ch;
+    renderAndDraw();
+}
+
+/**
+ * Moves the cursor one position to the left.
+ */
+function moveCursorLeft() {
+    if (cursor.ch > 0) {
+        cursor.ch -= 1;
+    } else if (cursor.line > 0) {
+        cursor.line -= 1;
+        cursor.ch = lines[cursor.line].length;
+    }
+    desiredColumn = cursor.ch;
+}
+
+/**
+ * Moves the cursor one position to the right.
+ */
+function moveCursorRight() {
+    if (cursor.ch < lines[cursor.line].length) {
+        cursor.ch += 1;
+    } else if (cursor.line < lines.length - 1) {
+        cursor.line += 1;
+        cursor.ch = 0;
+    }
+    desiredColumn = cursor.ch;
+}
+
+/**
+ * Moves the cursor up one line, maintaining the desired column.
+ */
+function moveCursorUp() {
+    if (cursor.line > 0) {
+        cursor.line -= 1;
+        const lineLength = lines[cursor.line].length;
+        cursor.ch = Math.min(desiredColumn, lineLength);
+    }
+}
+
+/**
+ * Moves the cursor down one line, maintaining the desired column.
+ */
+function moveCursorDown() {
+    if (cursor.line < lines.length - 1) {
+        cursor.line += 1;
+        const lineLength = lines[cursor.line].length;
+        cursor.ch = Math.min(desiredColumn, lineLength);
+    }
+}
+
+/**
+ * Selects all text in the editor.
+ */
+function selectAll() {
+    selection = {
+        start: { line: 0, ch: 0 },
+        end: { line: lines.length - 1, ch: lines[lines.length - 1].length }
+    };
+    cursor = { line: lines.length - 1, ch: lines[lines.length - 1].length };
+    desiredColumn = cursor.ch;
+}
+
+// ========================= Rendering and Animation =========================
+
+/**
+ * Renders the text and updates the WebGL texture.
+ */
+function renderAndDraw() {
+    renderTextCanvas();
+    drawScene();
+}
+
+/**
+ * Blinking caret using requestAnimationFrame.
+ */
+function blinkCaret() {
+    caretVisible = !caretVisible;
+    renderAndDraw();
+    setTimeout(() => {
+        requestAnimationFrame(blinkCaret);
+    }, blinkInterval);
+}
+
+// Start blinking
+blinkCaret();
+
+// ========================= Mouse Handling =========================
+
+/**
+ * Gets the mouse position relative to the canvas.
+ * @param {MouseEvent} e 
+ * @returns {Object} - {x, y}
+ */
+function getMousePosition(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+    };
+}
+
+/**
+ * Converts mouse coordinates to cursor position in text.
+ * @param {number} x 
+ * @param {number} y 
+ * @returns {Object} - {line, ch}
+ */
+function getCursorFromPosition(x, y) {
+    const lineHeight = 30; // Must match rendering
+    const charWidth = textCtx.measureText('M').width; // Monospace
+    const startX = 10;
+    const startY = 10;
+
+    let line = Math.floor((y - startY) / lineHeight);
+    line = Math.max(0, Math.min(line, lines.length - 1));
+
+    let ch = Math.floor((x - startX) / charWidth);
+    ch = Math.max(0, Math.min(ch, lines[line].length));
+
+    return { line, ch };
+}
+
+// ========================= Canvas Initialization =========================
+
+/**
+ * Initializes the canvases and sets up their sizes.
+ */
+function initializeCanvases() {
+    // Set WebGL canvas size
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+    // Set offscreen canvas size to match WebGL canvas size for correct aspect ratio
+    textCanvas.width = canvas.width;
+    textCanvas.height = canvas.height;
+}
+
+// ========================= Text Selection Utilities =========================
+
+/**
+ * Normalizes the selection so that start is before end.
+ * @param {Object} sel - {start: {line, ch}, end: {line, ch}}
+ * @returns {Object} - Normalized selection
+ */
+function normalizeSelection(sel) {
+    const a = sel.start;
+    const b = sel.end;
+    if (a.line < b.line || (a.line === b.line && a.ch <= b.ch)) {
+        return sel;
+    } else {
+        return { start: b, end: a };
+    }
+}
+
+</script>
+</body>
+</html>

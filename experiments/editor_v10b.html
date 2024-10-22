@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Advanced Canvas-Based WebGL Text Editor</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #272822; }
+        canvas { display: block; }
+        /* Make the canvas focusable */
+        canvas:focus {
+            outline: none;
+        }
+        /* Settings Panel Styling */
+        #settingsPanel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(40, 40, 40, 0.9);
+            color: #F8F8F2;
+            padding: 10px;
+            border-radius: 5px;
+            display: none; /* Hidden by default */
+            z-index: 10;
+        }
+        #settingsPanel label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        #settingsPanel select {
+            width: 100%;
+            padding: 5px;
+            margin-bottom: 10px;
+            background-color: #3E3D32;
+            color: #F8F8F2;
+            border: none;
+            border-radius: 3px;
+        }
+        #settingsButton {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(40, 40, 40, 0.9);
+            color: #F8F8F2;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <button id="settingsButton">Settings</button>
+    <div id="settingsPanel">
+        <label for="themeSelect">Theme:</label>
+        <select id="themeSelect">
+            <option value="monokai">Monokai</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+        </select>
+        <button id="closeSettings">Close</button>
+    </div>
+    <canvas id="glCanvas" tabindex="0"></canvas>
+    
+    <script>
+    /**
+     * Advanced Canvas-Based WebGL Text Editor
+     * 
+     * Features:
+     * 1. Responsive resizing with correct aspect ratio.
+     * 2. Text rendering using an offscreen 2D canvas as a WebGL texture.
+     * 3. Blinking caret (cursor).
+     * 4. Mouse interaction for moving the caret and selecting text.
+     * 5. Text highlighting for selection.
+     * 6. Double-click to select a word and highlight all its occurrences.
+     * 7. Clipboard operations: Copy (Ctrl/Cmd + C), Paste (Ctrl/Cmd + V), Cut (Ctrl/Cmd + X).
+     * 8. Vertical scrolling for large texts.
+     * 9. Theming options.
+     * 10. Undo/Redo functionality.
+     * 11. Syntax highlighting for Python using Monokai theme.
+     */
+    
+    // ========================= Initialization =========================
+    
+    // Get the WebGL canvas and set its size
+    const canvas = document.getElementById('glCanvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    // Ensure WebGL is available
+    if (!gl) {
+        alert("WebGL not supported, please use a different browser.");
+    }
+    
+    // Offscreen canvas for text rendering
+    let textCanvas = document.createElement('canvas');
+    let textCtx = textCanvas.getContext('2d');
+    
+    // Initialize text
+    let lines = ['# Welcome to the Python Editor', '', 'def hello_world():', '    print("Hello, World!")', '']; // Sample Python code
+    let cursor = { line: 0, ch: lines[0].length }; // Cursor at end of first line
+    let selection = null; // { start: {line, ch}, end: {line, ch} }
+    let highlights = []; // Array of {line, ch, length} for all occurrences
+    
+    // Blinking caret
+    let caretVisible = true;
+    const blinkInterval = 500; // milliseconds
+    
+    // Mouse selection state
+    let isSelecting = false;
+    
+    // Desired column for vertical cursor movements
+    let desiredColumn = cursor.ch;
+    
+    // Scrolling
+    let scrollOffset = 0; // Number of lines scrolled from top
+    const visibleLines = 0; // Will be calculated based on canvas size
+    
+    // Theming
+    const themes = {
+        monokai: {
+            background: '#272822',
+            text: '#F8F8F2',
+            caret: '#F8F8F2',
+            selection: 'rgba(173, 216, 230, 0.5)', // Light blue
+            highlight: 'rgba(144, 238, 144, 0.5)', // Light green
+            syntax: {
+                keyword: '#F92672',
+                string: '#E6DB74',
+                comment: '#75715E',
+                function: '#A6E22E',
+                default: '#F8F8F2'
+            }
+        },
+        light: {
+            background: '#FFFFFF',
+            text: '#000000',
+            caret: '#000000',
+            selection: 'rgba(173, 216, 230, 0.5)', // Light blue
+            highlight: 'rgba(144, 238, 144, 0.5)', // Light green
+            syntax: {
+                keyword: '#0000FF',
+                string: '#A31515',
+                comment: '#008000',
+                function: '#795E26',
+                default: '#000000'
+            }
+        },
+        dark: {
+            background: '#1E1E1E',
+            text: '#D4D4D4',
+            caret: '#D4D4D4',
+            selection: 'rgba(128, 128, 128, 0.5)', // Grey
+            highlight: 'rgba(255, 255, 0, 0.3)', // Yellow
+            syntax: {
+                keyword: '#569CD6',
+                string: '#D69D85',
+                comment: '#6A9955',
+                function: '#DCDCAA',
+                default: '#D4D4D4'
+            }
+        }
+    };
+    let currentTheme = themes.monokai; // Default theme
+    
+    // Undo/Redo Stacks
+    const undoStack = [];
+    const redoStack = [];
+    const maxStackSize = 100; // Limit stack size to prevent memory issues
+    
+    // ========================= WebGL Setup =========================
+    
+    // Create and compile shader programs
+    const vertexShaderSrc = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        void main(){
+            gl_Position = vec4(a_position, 0, 1);
+            v_texCoord = a_texCoord;
+        }
+    `;
+    
+    const fragmentShaderSrc = `
+        precision mediump float;
+        varying vec2 v_texCoord;
+        uniform sampler2D u_texture;
+        void main(){
+            gl_FragColor = texture2D(u_texture, v_texCoord);
+        }
+    `;
+    
+    // Function to compile shader
+    function compileShader(gl, shaderSource, shaderType){
+        const shader = gl.createShader(shaderType);
+        gl.shaderSource(shader, shaderSource);
+        gl.compileShader(shader);
+        const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+        if(!success){
+            console.error('Shader compilation failed:', gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        return shader;
+    }
+    
+    // Function to create shader program
+    function createProgram(gl, vertexSrc, fragmentSrc){
+        const vertexShader = compileShader(gl, vertexSrc, gl.VERTEX_SHADER);
+        const fragmentShader = compileShader(gl, fragmentSrc, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+        if(!success){
+            console.error('Program linking failed:', gl.getProgramInfoLog(program));
+            gl.deleteProgram(program);
+            return null;
+        }
+        return program;
+    }
+    
+    const program = createProgram(gl, vertexShaderSrc, fragmentShaderSrc);
+    gl.useProgram(program);
+    
+    // Look up attribute locations
+    const positionLocation = gl.getAttribLocation(program, 'a_position');
+    const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+    
+    // Look up uniform locations
+    const textureLocation = gl.getUniformLocation(program, 'u_texture');
+    
+    // Create buffers
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = new Float32Array([
+        -1, -1, // Bottom-left
+         1, -1, // Bottom-right
+        -1,  1, // Top-left
+        -1,  1, // Top-left
+         1, -1, // Bottom-right
+         1,  1, // Top-right
+    ]);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    
+    const texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    const texCoords = new Float32Array([
+        0, 1, // Bottom-left
+        1, 1, // Bottom-right
+        0, 0, // Top-left
+        0, 0, // Top-left
+        1, 1, // Bottom-right
+        1, 0, // Top-right
+    ]);
+    gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+    
+    // Enable attributes
+    gl.enableVertexAttribArray(positionLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(
+        positionLocation,
+        2,          // size
+        gl.FLOAT,   // type
+        false,      // normalize
+        0,          // stride
+        0           // offset
+    );
+    
+    gl.enableVertexAttribArray(texCoordLocation);
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.vertexAttribPointer(
+        texCoordLocation,
+        2,          // size
+        gl.FLOAT,   // type
+        false,      // normalize
+        0,          // stride
+        0           // offset
+    );
+    
+    // Create texture
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    // Set texture parameters
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // Initial texture upload
+    updateTexture();
+    
+    // ========================= Rendering =========================
+    
+    /**
+     * Renders text, selection, caret, and syntax highlighting on the offscreen canvas.
+     */
+    function renderTextCanvas() {
+        // Clear the canvas with the background color
+        textCtx.fillStyle = currentTheme.background;
+        textCtx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+    
+        // Draw highlights for all occurrences
+        if (highlights.length > 0) {
+            textCtx.fillStyle = currentTheme.highlight; // Highlight color
+            highlights.forEach(({ line, ch, length }) => {
+                const charWidth = textCtx.measureText('M').width; // Monospace
+                const x = 10 + ch * charWidth;
+                const y = 10 + line * 30 - scrollOffset * 30;
+                const width = textCtx.measureText(lines[line].substring(ch, ch + length)).width;
+                const height = 30; // Line height
+    
+                textCtx.fillRect(x, y, width, height);
+            });
+        }
+    
+        // Draw selection background if any
+        if (selection) {
+            const { start, end } = normalizeSelection(selection);
+            for (let i = start.line; i <= end.line; i++) {
+                const lineText = lines[i];
+                const startCh = (i === start.line) ? start.ch : 0;
+                const endCh = (i === end.line) ? end.ch : lineText.length;
+                const selectedText = lineText.substring(startCh, endCh);
+                const charWidth = textCtx.measureText('M').width; // Monospace
+                const x = 10 + startCh * charWidth;
+                const y = 10 + i * 30 - scrollOffset * 30;
+                const width = textCtx.measureText(selectedText).width;
+                const height = 30; // Line height to eliminate gaps
+    
+                textCtx.fillStyle = currentTheme.selection; // Selection color
+                textCtx.fillRect(x, y, width, height);
+            }
+        }
+    
+        // Draw the text with syntax highlighting
+        textCtx.textBaseline = 'top';
+        textCtx.font = '24px monospace';
+    
+        for (let i = 0; i < lines.length; i++) {
+            const y = 10 + i * 30 - scrollOffset * 30;
+            if (y + 30 < 0 || y > textCanvas.height) continue; // Skip rendering lines outside the viewport
+    
+            const tokens = tokenizePython(lines[i]);
+            let x = 10;
+            tokens.forEach(token => {
+                textCtx.fillStyle = currentTheme.syntax[token.type] || currentTheme.syntax.default;
+                textCtx.fillText(token.value, x, y);
+                x += textCtx.measureText(token.value).width;
+            });
+        }
+    
+        // Draw the caret if visible and within the viewport
+        if (caretVisible) {
+            const { x, y } = getCaretCoordinates();
+            if (y >= -30 && y <= textCanvas.height) { // Check if caret is visible
+                textCtx.beginPath();
+                textCtx.moveTo(x, y);
+                textCtx.lineTo(x, y + 24); // 24px height matching font size
+                textCtx.strokeStyle = currentTheme.caret;
+                textCtx.lineWidth = 2;
+                textCtx.stroke();
+            }
+        }
+    
+        // Draw the scrollbar
+        drawScrollbar();
+    }
+    
+    /**
+     * Tokenizes a line of Python code for syntax highlighting.
+     * @param {string} line 
+     * @returns {Array} - Array of tokens with type and value
+     */
+    function tokenizePython(line) {
+        const keywords = [
+            'False', 'class', 'finally', 'is', 'return',
+            'None', 'continue', 'for', 'lambda', 'try',
+            'True', 'def', 'from', 'nonlocal', 'while',
+            'and', 'del', 'global', 'not', 'with',
+            'as', 'elif', 'if', 'or', 'yield',
+            'assert', 'else', 'import', 'pass',
+            'break', 'except', 'in', 'raise'
+        ];
+        const tokens = [];
+        let current = '';
+        let type = 'default';
+    
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+    
+            // Handle strings
+            if (char === '"' || char === "'") {
+                if (type === 'string') {
+                    current += char;
+                    tokens.push({ type: 'string', value: current });
+                    current = '';
+                    type = 'default';
+                } else if (current.length > 0) {
+                    tokens.push({ type, value: current });
+                    current = char;
+                    type = 'string';
+                } else {
+                    current = char;
+                    type = 'string';
+                }
+                continue;
+            }
+    
+            // Handle comments
+            if (char === '#' && type !== 'string') {
+                if (current.length > 0) {
+                    tokens.push({ type, value: current });
+                }
+                current = line.substring(i);
+                tokens.push({ type: 'comment', value: current });
+                break;
+            }
+    
+            // Handle whitespace
+            if (/\s/.test(char) && type !== 'string') {
+                if (current.length > 0) {
+                    tokens.push({ type, value: current });
+                    current = '';
+                }
+                tokens.push({ type: 'whitespace', value: char });
+                continue;
+            }
+    
+            // Handle identifiers and keywords
+            if (/[a-zA-Z_]/.test(char) && type !== 'string') {
+                current += char;
+                // Peek next characters to determine full identifier
+                if (i === line.length - 1 || /[^a-zA-Z0-9_]/.test(line[i + 1])) {
+                    if (keywords.includes(current)) {
+                        tokens.push({ type: 'keyword', value: current });
+                    } else {
+                        tokens.push({ type: 'function', value: current }); // Assuming functions for simplicity
+                    }
+                    current = '';
+                    type = 'default';
+                }
+                continue;
+            }
+    
+            // Handle everything else
+            current += char;
+            type = 'default';
+        }
+    
+        if (current.length > 0) {
+            tokens.push({ type, value: current });
+        }
+    
+        return tokens;
+    }
+    
+    /**
+     * Normalizes the selection so that start is before end.
+     * @param {Object} sel - {start: {line, ch}, end: {line, ch}}
+     * @returns {Object} - Normalized selection
+     */
+    function normalizeSelection(sel) {
+        const a = sel.start;
+        const b = sel.end;
+        if (a.line < b.line || (a.line === b.line && a.ch <= b.ch)) {
+            return sel;
+        } else {
+            return { start: b, end: a };
+        }
+    }
+    
+    /**
+     * Gets the caret coordinates based on cursor position.
+     * @returns {Object} - {x, y}
+     */
+    function getCaretCoordinates() {
+        const { line, ch } = cursor;
+        const lineText = lines[line] || '';
+        const charWidth = textCtx.measureText('M').width; // Monospace
+        const x = 10 + ch * charWidth;
+        const y = 10 + line * 30 - scrollOffset * 30;
+        return { x, y };
+    }
+    
+    /**
+     * Updates the WebGL texture with the current textCanvas content.
+     */
+    function updateTexture() {
+        renderTextCanvas();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(
+            gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            textCanvas
+        );
+    }
+    
+    /**
+     * Draws the WebGL scene by rendering the textured rectangle.
+     */
+    function drawScene() {
+        gl.clearColor(0, 0, 0, 0); // Transparent background
+        gl.clear(gl.COLOR_BUFFER_BIT);
+    
+        gl.uniform1i(textureLocation, 0); // Texture unit 0
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+    
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+    
+    /**
+     * Renders and draws the scene.
+     */
+    function renderAndDraw() {
+        updateTexture();
+        drawScene();
+    }
+    
+    // Initial render
+    renderAndDraw();
+    
+    // ========================= Event Handling =========================
+    
+    // Make the canvas focusable and focus it
+    canvas.focus();
+    
+    // Handle keyboard events
+    canvas.addEventListener('keydown', async (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
+    
+        if (e.key.length === 1 && !ctrlKey && !e.altKey && !e.metaKey) {
+            // Insert character
+            insertText(e.key);
+            e.preventDefault();
+        } else if (e.key === 'Backspace') {
+            deleteCharacter(false);
+            e.preventDefault();
+        } else if (e.key === 'Delete') {
+            deleteCharacter(true);
+            e.preventDefault();
+        } else if (e.key === 'Enter') {
+            insertNewLine();
+            e.preventDefault();
+        } else if (e.key === 'Tab') {
+            insertText('    '); // Insert four spaces
+            e.preventDefault();
+        } else if (e.key === 'ArrowLeft') {
+            moveCursorLeft();
+            e.preventDefault();
+        } else if (e.key === 'ArrowRight') {
+            moveCursorRight();
+            e.preventDefault();
+        } else if (e.key === 'ArrowUp') {
+            moveCursorUp();
+            e.preventDefault();
+        } else if (e.key === 'ArrowDown') {
+            moveCursorDown();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 'a') {
+            // Select All
+            selectAll();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 'c') {
+            // Copy
+            await copySelection();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 'x') {
+            // Cut
+            await cutSelection();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 'v') {
+            // Paste
+            await pasteText();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 'z') {
+            // Undo
+            undo();
+            e.preventDefault();
+        } else if (ctrlKey && (e.key.toLowerCase() === 'y' || (isMac && e.shiftKey && e.key.toLowerCase() === 'z'))) {
+            // Redo
+            redo();
+            e.preventDefault();
+        } else if (ctrlKey && e.key.toLowerCase() === 's') {
+            // Prevent default Save dialog
+            e.preventDefault();
+        }
+    });
+    
+    // Handle mouse events for cursor positioning and text selection
+    canvas.addEventListener('mousedown', (e) => {
+        const pos = getMousePosition(e);
+        const newCursor = getCursorFromPosition(pos.x, pos.y);
+        cursor = newCursor;
+        selection = { start: { ...cursor }, end: { ...cursor } };
+        isSelecting = true;
+        desiredColumn = cursor.ch;
+        clearHighlights();
+        renderAndDraw();
+    });
+    
+    canvas.addEventListener('mousemove', (e) => {
+        if (isSelecting) {
+            const pos = getMousePosition(e);
+            const newCursor = getCursorFromPosition(pos.x, pos.y);
+            cursor = newCursor;
+            selection.end = { ...cursor };
+            desiredColumn = cursor.ch;
+            clearHighlights();
+            renderAndDraw();
+        }
+    });
+    
+    canvas.addEventListener('mouseup', (e) => {
+        if (isSelecting) {
+            isSelecting = false;
+            // If selection start and end are the same, remove selection
+            if (selection.start.line === selection.end.line && selection.start.ch === selection.end.ch) {
+                selection = null;
+            }
+            renderAndDraw();
+        }
+    });
+    
+    canvas.addEventListener('mouseleave', (e) => {
+        if (isSelecting) {
+            isSelecting = false;
+            // If selection start and end are the same, remove selection
+            if (selection.start.line === selection.end.line && selection.start.ch === selection.end.ch) {
+                selection = null;
+            }
+            renderAndDraw();
+        }
+    });
+    
+    // Handle double-click for word selection and highlighting all occurrences
+    canvas.addEventListener('dblclick', (e) => {
+        const pos = getMousePosition(e);
+        const word = getWordAtPosition(pos.x, pos.y);
+        if (word) {
+            selection = getFirstOccurrenceSelection(word);
+            highlightAllOccurrences(word);
+            renderAndDraw();
+        }
+    });
+    
+    // Prevent default drag behavior
+    canvas.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+    });
+    
+    // ========================= Text Manipulation Functions =========================
+    
+    /**
+     * Inserts text at the current cursor position, replacing the selection if any.
+     * @param {string} text 
+     */
+    function insertText(text) {
+        // Save state for undo
+        saveState();
+    
+        if (selection) {
+            deleteSelection();
+        }
+        const line = lines[cursor.line];
+        const before = line.substring(0, cursor.ch);
+        const after = line.substring(cursor.ch);
+        lines[cursor.line] = before + text + after;
+        cursor.ch += text.length;
+        desiredColumn = cursor.ch;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Inserts a new line at the current cursor position, splitting the current line.
+     */
+    function insertNewLine() {
+        // Save state for undo
+        saveState();
+    
+        if (selection) {
+            deleteSelection();
+        }
+        const line = lines[cursor.line];
+        const before = line.substring(0, cursor.ch);
+        const after = line.substring(cursor.ch);
+        lines[cursor.line] = before;
+        lines.splice(cursor.line + 1, 0, after);
+        cursor.line += 1;
+        cursor.ch = 0;
+        desiredColumn = cursor.ch;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Deletes a character before or after the cursor.
+     * @param {boolean} forward - If true, delete after the cursor (Delete key). If false, delete before (Backspace key).
+     */
+    function deleteCharacter(forward) {
+        // Save state for undo
+        saveState();
+    
+        if (selection) {
+            deleteSelection();
+            return;
+        }
+        if (forward) {
+            // Delete character after the cursor
+            const line = lines[cursor.line];
+            if (cursor.ch < line.length) {
+                lines[cursor.line] = line.substring(0, cursor.ch) + line.substring(cursor.ch + 1);
+            } else if (cursor.line < lines.length - 1) {
+                // Merge with next line
+                lines[cursor.line] += lines[cursor.line + 1];
+                lines.splice(cursor.line + 1, 1);
+            }
+        } else {
+            // Delete character before the cursor
+            if (cursor.ch > 0) {
+                const line = lines[cursor.line];
+                lines[cursor.line] = line.substring(0, cursor.ch - 1) + line.substring(cursor.ch);
+                cursor.ch -= 1;
+                desiredColumn = cursor.ch;
+            } else if (cursor.line > 0) {
+                // Merge with previous line
+                const prevLine = lines[cursor.line - 1];
+                const currentLine = lines[cursor.line];
+                cursor.ch = prevLine.length;
+                lines[cursor.line - 1] = prevLine + currentLine;
+                lines.splice(cursor.line, 1);
+                cursor.line -= 1;
+                desiredColumn = cursor.ch;
+            }
+        }
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Deletes the currently selected text.
+     */
+    function deleteSelection() {
+        // Save state for undo
+        saveState();
+    
+        const { start, end } = normalizeSelection(selection);
+        if (start.line === end.line) {
+            const line = lines[start.line];
+            lines[start.line] = line.substring(0, start.ch) + line.substring(end.ch);
+        } else {
+            const firstLine = lines[start.line].substring(0, start.ch);
+            const lastLine = lines[end.line].substring(end.ch);
+            lines[start.line] = firstLine + lastLine;
+            lines.splice(start.line + 1, end.line - start.line);
+        }
+        cursor = { ...start };
+        selection = null;
+        desiredColumn = cursor.ch;
+        clearHighlights();
+    }
+    
+    /**
+     * Moves the cursor one position to the left.
+     */
+    function moveCursorLeft() {
+        if (selection) {
+            cursor = { ...normalizeSelection(selection).start };
+            selection = null;
+        } else if (cursor.ch > 0) {
+            cursor.ch -= 1;
+        } else if (cursor.line > 0) {
+            cursor.line -= 1;
+            cursor.ch = lines[cursor.line].length;
+        }
+        desiredColumn = cursor.ch;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Moves the cursor one position to the right.
+     */
+    function moveCursorRight() {
+        if (selection) {
+            cursor = { ...normalizeSelection(selection).end };
+            selection = null;
+        } else if (cursor.ch < lines[cursor.line].length) {
+            cursor.ch += 1;
+        } else if (cursor.line < lines.length - 1) {
+            cursor.line += 1;
+            cursor.ch = 0;
+        }
+        desiredColumn = cursor.ch;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Moves the cursor up one line, maintaining the desired column.
+     */
+    function moveCursorUp() {
+        if (cursor.line > 0) {
+            cursor.line -= 1;
+            const lineLength = lines[cursor.line].length;
+            cursor.ch = Math.min(desiredColumn, lineLength);
+        }
+        selection = null;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Moves the cursor down one line, maintaining the desired column.
+     */
+    function moveCursorDown() {
+        if (cursor.line < lines.length - 1) {
+            cursor.line += 1;
+            const lineLength = lines[cursor.line].length;
+            cursor.ch = Math.min(desiredColumn, lineLength);
+        }
+        selection = null;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Selects all text in the editor.
+     */
+    function selectAll() {
+        selection = {
+            start: { line: 0, ch: 0 },
+            end: { line: lines.length - 1, ch: lines[lines.length - 1].length }
+        };
+        cursor = { line: lines.length - 1, ch: lines[lines.length - 1].length };
+        desiredColumn = cursor.ch;
+        highlightAllOccurrences(); // Highlight all since all text is selected
+        renderAndDraw();
+    }
+    
+    /**
+     * Selects a specific word in the document.
+     * @param {string} word 
+     */
+    function selectWord(word) {
+        if (!word) return;
+        const wordLength = word.length;
+        for (let i = 0; i < lines.length; i++) {
+            let ch = lines[i].indexOf(word);
+            if (ch !== -1) {
+                // Ensure full word match
+                const before = ch === 0 || isDelimiter(lines[i][ch - 1]);
+                const after = (ch + word.length === lines[i].length) || isDelimiter(lines[i][ch + word.length]);
+                if (before && after) {
+                    selection = {
+                        start: { line: i, ch: ch },
+                        end: { line: i, ch: ch + word.length }
+                    };
+                    break; // Select first occurrence only
+                }
+            }
+        }
+    }
+    
+    /**
+     * Highlights all occurrences of a given word in the document.
+     * @param {string} [word] - If no word is provided, clears all highlights
+     */
+    function highlightAllOccurrences(word = null) {
+        if (!word) {
+            // If no word is provided, highlight all text as part of selection
+            highlights = [];
+            return;
+        }
+        highlights = [];
+        const normalizedWord = word.toLowerCase();
+        lines.forEach((lineText, lineIndex) => {
+            let chIndex = 0;
+            const normalizedLine = lineText.toLowerCase();
+            while ((chIndex = normalizedLine.indexOf(normalizedWord, chIndex)) !== -1) {
+                // Ensure full word match
+                const before = chIndex === 0 || isDelimiter(lineText[chIndex - 1]);
+                const after = (chIndex + word.length === lineText.length) || isDelimiter(lineText[chIndex + word.length]);
+                if (before && after) {
+                    highlights.push({ line: lineIndex, ch: chIndex, length: word.length });
+                }
+                chIndex += word.length;
+            }
+        });
+    }
+    
+    /**
+     * Clears all highlight occurrences.
+     */
+    function clearHighlights() {
+        highlights = [];
+    }
+    
+    // ========================= Clipboard Operations =========================
+    
+    /**
+     * Copies the selected text to the clipboard.
+     */
+    async function copySelection() {
+        if (!selection) return;
+        const { start, end } = normalizeSelection(selection);
+        let selectedText = '';
+        for (let i = start.line; i <= end.line; i++) {
+            const lineText = lines[i];
+            const startCh = (i === start.line) ? start.ch : 0;
+            const endCh = (i === end.line) ? end.ch : lineText.length;
+            selectedText += lineText.substring(startCh, endCh);
+            if (i !== end.line) selectedText += '\n';
+        }
+        try {
+            await navigator.clipboard.writeText(selectedText);
+            console.log('Copied to clipboard:', selectedText);
+        } catch (err) {
+            console.error('Failed to copy:', err);
+        }
+    }
+    
+    /**
+     * Cuts the selected text to the clipboard and removes it from the document.
+     */
+    async function cutSelection() {
+        if (!selection) return;
+        await copySelection();
+        deleteSelection();
+    }
+    
+    /**
+     * Pastes text from the clipboard at the current cursor position.
+     */
+    async function pasteText() {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                // Save state for undo
+                saveState();
+    
+                if (selection) {
+                    deleteSelection();
+                }
+                insertText(text);
+            }
+        } catch (err) {
+            console.error('Failed to paste:', err);
+        }
+    }
+    
+    // ========================= Undo/Redo Functionality =========================
+    
+    /**
+     * Saves the current state to the undo stack.
+     */
+    function saveState() {
+        // Limit undo stack size
+        if (undoStack.length >= maxStackSize) {
+            undoStack.shift();
+        }
+        // Deep copy of lines and cursor
+        undoStack.push({
+            lines: JSON.parse(JSON.stringify(lines)),
+            cursor: { ...cursor },
+            selection: selection ? {
+                start: { ...selection.start },
+                end: { ...selection.end }
+            } : null
+        });
+        // Clear redo stack
+        redoStack.length = 0;
+    }
+    
+    /**
+     * Performs the undo operation.
+     */
+    function undo() {
+        if (undoStack.length === 0) return;
+        const currentState = {
+            lines: JSON.parse(JSON.stringify(lines)),
+            cursor: { ...cursor },
+            selection: selection ? {
+                start: { ...selection.start },
+                end: { ...selection.end }
+            } : null
+        };
+        redoStack.push(currentState);
+        const prevState = undoStack.pop();
+        lines = JSON.parse(JSON.stringify(prevState.lines));
+        cursor = { ...prevState.cursor };
+        selection = prevState.selection ? {
+            start: { ...prevState.selection.start },
+            end: { ...prevState.selection.end }
+        } : null;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    /**
+     * Performs the redo operation.
+     */
+    function redo() {
+        if (redoStack.length === 0) return;
+        const currentState = {
+            lines: JSON.parse(JSON.stringify(lines)),
+            cursor: { ...cursor },
+            selection: selection ? {
+                start: { ...selection.start },
+                end: { ...selection.end }
+            } : null
+        };
+        undoStack.push(currentState);
+        const nextState = redoStack.pop();
+        lines = JSON.parse(JSON.stringify(nextState.lines));
+        cursor = { ...nextState.cursor };
+        selection = nextState.selection ? {
+            start: { ...nextState.selection.start },
+            end: { ...nextState.selection.end }
+        } : null;
+        clearHighlights();
+        renderAndDraw();
+    }
+    
+    // ========================= Double-Click Word Selection =========================
+        
+    /**
+     * Finds the word at the given mouse position.
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {string|null}
+     */
+    function getWordAtPosition(x, y) {
+        const { line, ch } = getCursorFromPosition(x, y);
+        const lineText = lines[line];
+        if (!lineText) return null;
+
+        // Find word boundaries
+        const start = findWordStart(lineText, ch);
+        const end = findWordEnd(lineText, ch);
+
+        if (start === end) return null; // No word found
+
+        return lineText.substring(start, end);
+    }
+
+    /**
+     * Finds the start index of a word given a character index.
+     * @param {string} text 
+     * @param {number} ch 
+     * @returns {number}
+     */
+    function findWordStart(text, ch) {
+        if (ch > text.length) ch = text.length;
+        let start = ch;
+        while (start > 0 && !isDelimiter(text[start - 1])) {
+            start--;
+        }
+        return start;
+    }
+
+    /**
+     * Finds the end index of a word given a character index.
+     * @param {string} text 
+     * @param {number} ch 
+     * @returns {number}
+     */
+    function findWordEnd(text, ch) {
+        if (ch < 0) ch = 0;
+        let end = ch;
+        while (end < text.length && !isDelimiter(text[end])) {
+            end++;
+        }
+        return end;
+    }
+
+    /**
+     * Finds and selects the first occurrence of a word.
+     * @param {string} word 
+     * @returns {Object|null}
+     */
+    function getFirstOccurrenceSelection(word) {
+        for (let i = 0; i < lines.length; i++) {
+            let ch = lines[i].indexOf(word);
+            if (ch !== -1) {
+                // Ensure full word match
+                const before = ch === 0 || isDelimiter(lines[i][ch - 1]);
+                const after = (ch + word.length === lines[i].length) || isDelimiter(lines[i][ch + word.length]);
+                if (before && after) {
+                    return {
+                        start: { line: i, ch: ch },
+                        end: { line: i, ch: ch + word.length }
+                    };
+                }
+            }
+        }
+        return null;
+    }
+    
+    // ========================= Text Selection Utilities =========================
+
+    /**
+     * Determines if a character is a delimiter.
+     * @param {string} char 
+     * @returns {boolean}
+     */
+    function isDelimiter(char) {
+        return /\s|,|\.|!|\?|\(|\)|:|;|"/.test(char);
+    }
+
+    // ========================= Vertical Scrolling =========================
+    
+    /**
+     * Draws the vertical scrollbar.
+     */
+    function drawScrollbar() {
+        const scrollbarWidth = 10;
+        const totalHeight = lines.length * 30;
+        const visibleHeight = textCanvas.height;
+        const scrollbarHeight = Math.max((visibleHeight / totalHeight) * visibleHeight, 20);
+        const scrollbarY = (scrollOffset / (lines.length - Math.floor(visibleHeight / 30))) * (visibleHeight - scrollbarHeight);
+    
+        textCtx.fillStyle = 'rgba(128, 128, 128, 0.5)';
+        textCtx.fillRect(textCanvas.width - scrollbarWidth - 5, scrollbarY + 10, scrollbarWidth, scrollbarHeight);
+    }
+    
+    /**
+     * Handles mouse wheel events for scrolling.
+     */
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = Math.sign(e.deltaY);
+        scrollOffset += delta;
+        scrollOffset = Math.max(0, Math.min(scrollOffset, lines.length - Math.floor(textCanvas.height / 30)));
+        renderAndDraw();
+    }, { passive: false });
+    
+    // ========================= Theming Options =========================
+    
+    const settingsButton = document.getElementById('settingsButton');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const themeSelect = document.getElementById('themeSelect');
+    const closeSettings = document.getElementById('closeSettings');
+    
+    // Open settings panel
+    settingsButton.addEventListener('click', () => {
+        settingsPanel.style.display = 'block';
+    });
+    
+    // Close settings panel
+    closeSettings.addEventListener('click', () => {
+        settingsPanel.style.display = 'none';
+    });
+    
+    // Change theme
+    themeSelect.addEventListener('change', (e) => {
+        const selectedTheme = e.target.value;
+        currentTheme = themes[selectedTheme] || themes.monokai;
+        renderAndDraw();
+    });
+    
+    // ========================= Syntax Highlighting =========================
+    
+    // (Tokenization and highlighting handled in renderTextCanvas via tokenizePython)
+    
+    // ========================= Canvas Initialization =========================
+    
+    /**
+     * Initializes the canvases and sets up their sizes.
+     */
+    function initializeCanvases() {
+        // Set WebGL canvas size
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    
+        // Set offscreen canvas size to match WebGL canvas size for correct aspect ratio
+        textCanvas.width = canvas.width;
+        textCanvas.height = canvas.height;
+    
+        // Calculate visible lines (not directly used but can be useful)
+        // visibleLines = Math.floor(textCanvas.height / 30);
+    }
+    
+    // Call initialization
+    initializeCanvases();
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        initializeCanvases();
+        renderAndDraw();
+    });
+    
+    // ========================= Rendering and Animation =========================
+    
+    /**
+     * Renders the text and updates the WebGL texture.
+     */
+    function renderAndDraw() {
+        updateTexture();
+        drawScene();
+    }
+    
+    /**
+     * Blinking caret using setInterval.
+     */
+    function blinkCaret() {
+        setInterval(() => {
+            caretVisible = !caretVisible;
+            renderAndDraw();
+        }, blinkInterval);
+    }
+    
+    // Start caret blinking
+    blinkCaret();
+    
+    // ========================= Mouse Handling =========================
+    
+    /**
+     * Gets the mouse position relative to the canvas.
+     * @param {MouseEvent} e 
+     * @returns {Object} - {x, y}
+     */
+    function getMousePosition(e) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+    }
+    
+    /**
+     * Converts mouse coordinates to cursor position in text.
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {Object} - {line, ch}
+     */
+    function getCursorFromPosition(x, y) {
+        const lineHeight = 30; // Must match rendering
+        const charWidth = textCtx.measureText('M').width; // Monospace
+        const startX = 10;
+        const startY = 10;
+    
+        let line = Math.floor((y + scrollOffset * lineHeight - startY) / lineHeight);
+        line = Math.max(0, Math.min(line, lines.length - 1));
+    
+        let ch = Math.floor((x - startX) / charWidth);
+        ch = Math.max(0, ch);
+        const lineLength = lines[line].length;
+        ch = Math.min(ch, lineLength);
+    
+        return { line, ch };
+    }
+    
+    // ========================= Settings Panel Functionality =========================
+    
+    // Already handled above with settingsButton and settingsPanel event listeners
+    
+    // ========================= Final Code Review and Adjustments =========================
+    
+    // Ensure that all functions are defined before use
+    // Avoid duplicate event listeners and functions
+    
+    </script>
+    </body>
+    </html>

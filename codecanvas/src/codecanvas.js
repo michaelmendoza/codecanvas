@@ -1,5 +1,6 @@
 import { themes } from "./themes";
 import { tokenizePython } from "./tokenizer";
+import { normalizeSelection } from "./utils";
 
 export class CodeCanvas {
 
@@ -77,7 +78,7 @@ export class CodeCanvas {
 
         // Draw selection background if any
         if (this.selection) {
-            const { start, end } = this.normalizeSelection(this.selection);
+            const { start, end } = normalizeSelection(this.selection);
             for (let i = start.line; i <= end.line; i++) {
                 const lineText = this.lines[i];
                 const startCh = (i === start.line) ? start.ch : 0;
@@ -126,22 +127,6 @@ export class CodeCanvas {
 
         // Draw the scrollbar
         this.drawScrollbar();
-    }
-
-
-    /**
-     * Normalizes the selection so that start is before end.
-     * @param {Object} sel - {start: {line, ch}, end: {line, ch}}
-     * @returns {Object} - Normalized selection
-     */
-    normalizeSelection = (sel) => {
-        const a = sel.start;
-        const b = sel.end;
-        if (a.line < b.line || (a.line === b.line && a.ch <= b.ch)) {
-            return sel;
-        } else {
-            return { start: b, end: a };
-        }
     }
 
     /**

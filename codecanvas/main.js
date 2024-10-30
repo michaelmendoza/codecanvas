@@ -36,7 +36,4 @@ document.querySelector('#app').innerHTML = `
 setupCounter(document.querySelector('#counter'))
 
 const codeCanvas = new CodeCanvas();
-const webglRenderer = new WebGLRenderer(codeCanvas.gl);
-webglRenderer.renderAndDraw(codeCanvas.textCanvas);
-
 console.log(codeCanvas);

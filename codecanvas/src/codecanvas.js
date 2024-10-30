@@ -1,33 +1,35 @@
+import { TextEditor } from "./editor";
+import { initializeKeyboardAndMouseEvents } from "./events";
 import { themes } from "./themes";
 import { tokenizePython } from "./tokenizer";
 import { normalizeSelection } from "./utils";
+import { WebGLRenderer } from "./webgl";
 
 export class CodeCanvas {
 
-    constructor(options = {}) {
-        this.options = options;
+    constructor() {
+
+        this.editor = new TextEditor();
+
+        // Get the WebGL canvas and set its size
+        this.canvas = document.getElementById('glCanvas');
+        this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
+         
+         // Ensure WebGL is available
+        if (!this.gl) {
+             alert("WebGL not supported, please use a different browser.");
+        }
+        
+        // Offscreen canvas for text rendering
+        this.textCanvas = document.createElement('canvas');
+        this.textCtx = this.textCanvas.getContext('2d');        
         this.init();
+
+        this.webglRenderer = new WebGLRenderer(this.gl);
+        this.webglRenderer.renderAndDraw(this.textCanvas);
     }
 
     init() {
-        // Get the WebGL canvas and set its size
-       this.canvas = document.getElementById('glCanvas');
-       this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
-        
-        // Ensure WebGL is available
-        if (!this.gl) {
-            alert("WebGL not supported, please use a different browser.");
-        }
-       
-        // Offscreen canvas for text rendering
-        this.textCanvas = document.createElement('canvas');
-        this.textCtx = this.textCanvas.getContext('2d');
-        
-        // Initialize text
-        this.lines = ['# Welcome to the Python Editor', '', 'def hello_world():', '    print("Hello, World!")', '']; // Sample Python code
-        this.cursor = { line: 0, ch: this.lines[0].length }; // Cursor at end of first line
-        this.selection = null; // { start: {line, ch}, end: {line, ch} }
-        this.highlights = []; // Array of {line, ch, length} for all occurrences
         
         // Blinking caret
         this.caretVisible = true;
@@ -36,22 +38,42 @@ export class CodeCanvas {
         // Mouse selection state
         this.isSelecting = false;
         
-        // Desired column for vertical cursor movements
-        this.desiredColumn = this.cursor.ch;
-        
         // Scrolling
         this.scrollOffset = 0; // Number of lines scrolled from top
         this.visibleLines = 0; // Will be calculated based on canvas size
 
-        // Undo/Redo stacks
-        this.undoStack = [];
-        this.redoStack = [];
-        this.maxUndoStackSize = 100; // Limit undo stack size
-   
         // Current Theme
         this.currentTheme = themes.monokai;
 
-        this.renderTextCanvas();
+        this.initializeCanvas();
+        this.renderTextCanvas();    
+        initializeKeyboardAndMouseEvents(this);
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            this.initializeCanvas();
+            this.renderTextCanvas();
+            this.webglRenderer.renderAndDraw(this.textCanvas);
+        });
+    }
+
+    /**
+     * Initializes the canvases and sets up their sizes.
+     */
+    initializeCanvas = () => {
+        // Set WebGL canvas size
+        //canvas.width = window.innerWidth;
+        //canvas.height = window.innerHeight;
+        this.canvas.width = this.canvas.clientWidth;
+        this.canvas.height = this.canvas.clientHeight;
+        this.gl.viewport(0, 0, this.gl.drawingBufferWidth, this.gl.drawingBufferHeight);
+    
+        // Set offscreen canvas size to match WebGL canvas size for correct aspect ratio
+        this.textCanvas.width = this.canvas.width;
+        this.textCanvas.height = this.canvas.height;
+    
+        // Calculate visible lines (not directly used but can be useful)
+        // visibleLines = Math.floor(textCanvas.height / 30);
     }
 
     /**
@@ -63,13 +85,13 @@ export class CodeCanvas {
         this.textCtx.fillRect(0, 0, this.textCanvas.width, this.textCanvas.height);
 
         // Draw highlights for all occurrences
-        if (this.highlights.length > 0) {
+        if (this.editor.highlights.length > 0) {
             this.textCtx.fillStyle = this.currentTheme.highlight; // Highlight color
-            this.highlights.forEach(({ line, ch, length }) => {
+            this.editor.highlights.forEach(({ line, ch, length }) => {
                 const charWidth = this.textCtx.measureText('M').width; // Monospace
                 const x = 10 + ch * charWidth;
                 const y = 10 + line * 30 - this.scrollOffset * 30;
-                const width = this.textCtx.measureText(this.lines[line].substring(ch, ch + length)).width;
+                const width = this.textCtx.measureText(this.editor.lines[line].substring(ch, ch + length)).width;
                 const height = 30; // Line height
 
                 this.textCtx.fillRect(x, y, width, height);
@@ -77,10 +99,10 @@ export class CodeCanvas {
         }
 
         // Draw selection background if any
-        if (this.selection) {
-            const { start, end } = normalizeSelection(this.selection);
+        if (this.editor.selection) {
+            const { start, end } = normalizeSelection(this.editor.selection);
             for (let i = start.line; i <= end.line; i++) {
-                const lineText = this.lines[i];
+                const lineText = this.editor.lines[i];
                 const startCh = (i === start.line) ? start.ch : 0;
                 const endCh = (i === end.line) ? end.ch : lineText.length;
                 const selectedText = lineText.substring(startCh, endCh);
@@ -99,11 +121,11 @@ export class CodeCanvas {
         this.textCtx.textBaseline = 'top';
         this.textCtx.font = '24px monospace';
 
-        for (let i = 0; i < this.lines.length; i++) {
+        for (let i = 0; i < this.editor.lines.length; i++) {
             const y = 10 + i * 30 - this.scrollOffset * 30;
             if (y + 30 < 0 || y > this.textCanvas.height) continue; // Skip rendering lines outside the viewport
 
-            const tokens = tokenizePython(this.lines[i]);
+            const tokens = tokenizePython(this.editor.lines[i]);
             let x = 10;
             tokens.forEach(token => {
                 this.textCtx.fillStyle = this.currentTheme.syntax[token.type] || this.currentTheme.syntax.default;
@@ -134,8 +156,8 @@ export class CodeCanvas {
      * @returns {Object} - {x, y}
      */
     getCaretCoordinates = () => {
-        const { line, ch } = this.cursor;
-        const lineText = this.lines[line] || '';
+        const { line, ch } = this.editor.cursor;
+        const lineText = this.editor.lines[line] || '';
         const charWidth = this.textCtx.measureText('M').width; // Monospace
         const x = 10 + ch * charWidth;
         const y = 10 + line * 30 - this.scrollOffset * 30;
@@ -147,10 +169,10 @@ export class CodeCanvas {
      */
     drawScrollbar = () => {
         const scrollbarWidth = 10;
-        const totalHeight = this.lines.length * 30;
+        const totalHeight = this.editor.lines.length * 30;
         const visibleHeight = this.textCanvas.height;
         const scrollbarHeight = Math.max((visibleHeight / totalHeight) * visibleHeight, 20);
-        const scrollbarY = (this.scrollOffset / (this.lines.length - Math.floor(visibleHeight / 30))) * (visibleHeight - scrollbarHeight);
+        const scrollbarY = (this.scrollOffset / (this.editor.lines.length - Math.floor(visibleHeight / 30))) * (visibleHeight - scrollbarHeight);
 
         this.textCtx.fillStyle = 'rgba(128, 128, 128, 0.5)';
         this.textCtx.fillRect(this.textCanvas.width - scrollbarWidth - 5, scrollbarY + 10, scrollbarWidth, scrollbarHeight);

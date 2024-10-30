@@ -6,7 +6,7 @@ import { isDelimiter } from "./utils";
  * @param {*} canvas 
  * @param {TextEditor} editor 
  */
-export const KeyboardAndMouseEvents = (codecanvas) => {
+export const initializeKeyboardAndMouseEvents = (codecanvas) => {
 
     // Make the canvas focusable and focus it
     const canvas = codecanvas.canvas;
@@ -77,7 +77,6 @@ export const KeyboardAndMouseEvents = (codecanvas) => {
 
         codecanvas.renderAndDraw();
     });
-
      
     // Handle mouse events for editor.cursor positioning and text selection
     canvas.addEventListener('mousedown', (e) => {
@@ -186,7 +185,7 @@ export const getCursorFromPosition = (textCtx, lines, scrollOffset, x, y) => {
  * @param {number} y 
  * @returns {string|null}
  */
-getWordAtPosition = (lines, x, y) => {
+export const getWordAtPosition = (lines, x, y) => {
     const { line, ch } = getCursorFromPosition(x, y);
     const lineText = lines[line];
     if (!lineText) return null;

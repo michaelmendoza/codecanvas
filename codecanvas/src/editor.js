@@ -10,7 +10,7 @@ export class TextEditor {
         this.highlights = [];                                   // Array of {line, ch, length} for all occurrences
         this.desiredColumn = this.cursor.ch;                    // Desired column for vertical cursor movements
 
-        this.undo = UndoManager(this);
+        this.undo = new UndoManager(this);
     }
 
     /**

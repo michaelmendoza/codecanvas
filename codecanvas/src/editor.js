@@ -206,6 +206,7 @@ export class TextEditor {
             const lineLength = this.lines[this.cursor.line].length;
             this.cursor.ch = Math.min(this.desiredColumn, lineLength);
         }
+        this.cursor.line = Math.min(this.cursor.line, this.lines.length - 1);
         this.selection = null;
         this.clearHighlights();
     }

@@ -21,7 +21,6 @@ const oldHTML = `
 `
 
 document.querySelector('#app').innerHTML = `
-  <div>
     <canvas id="glCanvas"> </canvas>
     <div id="settingsPanel">
         <label for="themeSelect">Theme:</label>
@@ -31,7 +30,6 @@ document.querySelector('#app').innerHTML = `
             <option value="dark">Dark</option>
         </select>
     </div>
-  </div>
 `
 
 //setupCounter(document.querySelector('#counter'))

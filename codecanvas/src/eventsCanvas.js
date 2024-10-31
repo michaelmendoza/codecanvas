@@ -1,22 +1,33 @@
 import { TextEditor } from "./editor";
 import { isDelimiter } from "./utils";
 
+export class CanvasEvents {
+    constructor(codecanvas) {
+        this.codecanvas = codecanvas;
+        initializeCanvasEvents(codecanvas);
+    }
+}
+
 /**
  * Creates event listeners for keyboard and mouse events
  * @param {*} canvas 
  * @param {TextEditor} editor 
  */
-export const initializeKeyboardAndMouseEvents = (codecanvas) => {
+export const initializeCanvasEvents = (codecanvas) => {
 
     // Make the canvas focusable and focus it
     const canvas = codecanvas.canvas;
     const editor = codecanvas.editor;
+
+    // Make the canvas focusable and focus it
+    canvas.setAttribute('tabindex', '0');
     canvas.focus();
     
     // Handle keyboard events
     canvas.addEventListener('keydown', async (e) => {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
         const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
+        console.log('keydown:' + e.key);
 
         if (e.key.length === 1 && !ctrlKey && !e.altKey && !e.metaKey) {
             // Insert character
@@ -75,7 +86,7 @@ export const initializeKeyboardAndMouseEvents = (codecanvas) => {
             e.preventDefault();
         }
 
-        codecanvas.renderAndDraw();
+        codecanvas.webglRenderer.renderAndDraw();
     });
      
     // Handle mouse events for editor.cursor positioning and text selection
@@ -87,7 +98,7 @@ export const initializeKeyboardAndMouseEvents = (codecanvas) => {
         codecanvas.isSelecting = true;
         editor.desiredColumn = editor.cursor.ch;
         clearHighlights();
-        codecanvas.renderAndDraw();
+        codecanvas.webglRenderer.renderAndDraw();
     });
     
     canvas.addEventListener('mousemove', (e) => {
@@ -98,7 +109,7 @@ export const initializeKeyboardAndMouseEvents = (codecanvas) => {
             editor.selection.end = { ...editor.cursor };
             editor.desiredColumn = editor.cursor.ch;
             clearHighlights();
-            codecanvas.renderAndDraw();
+            codecanvas.webglRenderer.renderAndDraw();
         }
     });
     
@@ -109,7 +120,7 @@ export const initializeKeyboardAndMouseEvents = (codecanvas) => {
             if (editor.selection.start.line === editor.selection.end.line && editor.selection.start.ch === editor.selection.end.ch) {
                 editor.selection = null;
             }
-            codecanvas.renderAndDraw();
+            codecanvas.webglRenderer.renderAndDraw();
         }
     });
     
@@ -120,18 +131,18 @@ export const initializeKeyboardAndMouseEvents = (codecanvas) => {
             if (editor.selection.start.line === editor.selection.end.line && editor.selection.start.ch === editor.selection.end.ch) {
                 editor.selection = null;
             }
-            codecanvas.renderAndDraw();
+            codecanvas.webglRenderer.renderAndDraw();
         }
     });
     
     // Handle double-click for word selection and highlighting all occurrences
     canvas.addEventListener('dblclick', (e) => {
         const pos = getMousePosition(e);
-        const word = getWordAtPosition(pos.x, pos.y);
+        const word = getWordAtPosition(pos.x, pos.y, lineHeight, charWidth, startX, startY);
         if (word) {
             editor.selection = editor.getFirstOccurrenceSelection(word);
             editor.highlightAllOccurrences(word);
-            codecanvas.renderAndDraw();
+            codecanvas.webglRenderer.renderAndDraw();
         }
     });
     
@@ -155,76 +166,3 @@ export const getMousePosition = (e) => {
     };
 }
 
-/**
- * Converts mouse coordinates to cursor position in text.
- * @param {number} x 
- * @param {number} y 
- * @returns {Object} - {line, ch}
- */
-export const getCursorFromPosition = (textCtx, lines, scrollOffset, x, y) => {
-    // TODO: Make this work with updated ARGS
-    const lineHeight = 30; // Must match rendering
-    const charWidth = textCtx.measureText('M').width; // Monospace
-    const startX = 10;
-    const startY = 10;
-
-    let line = Math.floor((y + scrollOffset * lineHeight - startY) / lineHeight);
-    line = Math.max(0, Math.min(line, lines.length - 1));
-
-    let ch = Math.floor((x - startX) / charWidth);
-    ch = Math.max(0, ch);
-    const lineLength = lines[line].length;
-    ch = Math.min(ch, lineLength);
-
-    return { line, ch };
-}
-
-/**
- * Finds the word at the given mouse position.
- * @param {number} x 
- * @param {number} y 
- * @returns {string|null}
- */
-export const getWordAtPosition = (lines, x, y) => {
-    const { line, ch } = getCursorFromPosition(x, y);
-    const lineText = lines[line];
-    if (!lineText) return null;
-
-    // Find word boundaries
-    const start = findWordStart(lineText, ch);
-    const end = findWordEnd(lineText, ch);
-
-    if (start === end) return null; // No word found
-
-    return lineText.substring(start, end);
-}
-
-/**
- * Finds the start index of a word given a character index.
- * @param {string} text 
- * @param {number} ch 
- * @returns {number}
- */
-export const findWordStart = (text, ch) => {
-    if (ch > text.length) ch = text.length;
-    let start = ch;
-    while (start > 0 && !isDelimiter(text[start - 1])) {
-        start--;
-    }
-    return start;
-}
-
-/**
- * Finds the end index of a word given a character index.
- * @param {string} text 
- * @param {number} ch 
- * @returns {number}
- */
-export const findWordEnd = (text, ch) => {
-    if (ch < 0) ch = 0;
-    let end = ch;
-    while (end < text.length && !isDelimiter(text[end])) {
-        end++;
-    }
-    return end;
-}

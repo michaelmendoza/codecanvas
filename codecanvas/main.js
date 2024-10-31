@@ -3,10 +3,8 @@ import javascriptLogo from './javascript.svg'
 import viteLogo from '/vite.svg'
 import { setupCounter } from './counter.js'
 import { CodeCanvas } from './src/codecanvas.js'
-import { WebGLRenderer } from './src/webgl.js'
 
-document.querySelector('#app').innerHTML = `
-  <div>
+const oldHTML = `
     <a href="https://vite.dev" target="_blank">
       <img src="${viteLogo}" class="logo" alt="Vite logo" />
     </a>
@@ -20,7 +18,10 @@ document.querySelector('#app').innerHTML = `
     <p class="read-the-docs">
       Click on the Vite logo to learn more
     </p>
+`
 
+document.querySelector('#app').innerHTML = `
+  <div>
     <canvas id="glCanvas"> </canvas>
     <div id="settingsPanel">
         <label for="themeSelect">Theme:</label>
@@ -33,7 +34,7 @@ document.querySelector('#app').innerHTML = `
   </div>
 `
 
-setupCounter(document.querySelector('#counter'))
+//setupCounter(document.querySelector('#counter'))
 
 const codeCanvas = new CodeCanvas();
 console.log(codeCanvas);

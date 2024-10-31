@@ -1,16 +1,32 @@
-import { UndoManager } from "./undo";
+import { UndoManager } from "./undoManager";
 import { isDelimiter, normalizeSelection } from "./utils";
 
 export class TextEditor {
 
-    constructor() {
-        this.lines = ['# Welcome to the Python Editor', '', 'def hello_world():', '    print("Hello, World!")', '']; // Sample Python code
+    constructor(initalCode) {
+        this.lines = initalCode;                                // Initial Python code
         this.cursor = { line: 0, ch: this.lines[0].length };    // Cursor at end of first line
         this.selection = null;                                  // { start: {line, ch}, end: {line, ch} }
         this.highlights = [];                                   // Array of {line, ch, length} for all occurrences
         this.desiredColumn = this.cursor.ch;                    // Desired column for vertical cursor movements
+        this.caretVisible = true;                               // Blinking caret  
+        this.blinkInterval = 500;                               // Blinking caret interval
+        this.isSelecting = false;                               // Mouse selection state    
+        this.scrollOffset = 0;                                  // Scrolling - Number of lines scrolled from top
+        this.visibleLines = 0;                                  // Will be calculated based on canvas size
 
         this.undo = new UndoManager(this);
+    }
+
+    startCaretBlinking(renderCallback) {
+        this.caretBlinkIntervalId = setInterval(() => {
+            this.caretVisible = !this.caretVisible;
+            renderCallback();
+        }, this.blinkInterval);
+    }
+
+    stopCaretBlinking() {
+        clearInterval(this.caretBlinkIntervalId);
     }
 
     /**
@@ -24,9 +40,9 @@ export class TextEditor {
         if (this.selection) {
             this.deleteSelection();
         }
-        const line = this.lines[cursor.line];
-        const before = line.substring(0, cursor.ch);
-        const after = line.substring(cursor.ch);
+        const line = this.lines[this.cursor.line];
+        const before = line.substring(0, this.cursor.ch);
+        const after = line.substring(this.cursor.ch);
         this.lines[this.cursor.line] = before + text + after;
         this.cursor.ch += text.length;
         this.desiredColumn = this.cursor.ch;
@@ -64,7 +80,7 @@ export class TextEditor {
         // Save state for undo
         this.undo.saveState();
     
-        if (selection) {
+        if (this.selection) {
             this.deleteSelection();
             return;
         }
@@ -107,7 +123,7 @@ export class TextEditor {
         // Save state for undo
         this.undo.saveState();
     
-        const { start, end } = normalizeSelection(selection);
+        const { start, end } = normalizeSelection(this.selection);
         if (start.line === end.line) {
             const line = this.lines[start.line];
             this.lines[start.line] = line.substring(0, start.ch) + line.substring(end.ch);
@@ -119,7 +135,7 @@ export class TextEditor {
         }
         this.cursor = { ...start };
         this.selection = null;
-        this.desiredColumn = cursor.ch;
+        this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
     }
 
@@ -149,9 +165,9 @@ export class TextEditor {
         if (this.selection) {
             this.cursor = { ...normalizeSelection(this.selection).end };
             this.selection = null;
-        } else if (this.cursor.ch < lines[this.cursor.line].length) {
+        } else if (this.cursor.ch < this.lines[this.cursor.line].length) {
             this.cursor.ch += 1;
-        } else if (this.cursor.line < lines.length - 1) {
+        } else if (this.cursor.line < this.lines.length - 1) {
             this.cursor.line += 1;
             this.cursor.ch = 0;
         }
@@ -166,7 +182,7 @@ export class TextEditor {
     moveCursorUp = () => {
         if (this.cursor.line > 0) {
             this.cursor.line -= 1;
-            const lineLength = lines[this.cursor.line].length;
+            const lineLength = this.lines[this.cursor.line].length;
             this.cursor.ch = Math.min(this.desiredColumn, lineLength);
         }
         this.selection = null;
@@ -178,9 +194,9 @@ export class TextEditor {
      * Moves the cursor down one line, maintaining the desired column.
      */
     moveCursorDown = () => {
-        if (this.cursor.line < lines.length - 1) {
+        if (this.cursor.line < this.lines.length - 1) {
             this.cursor.line += 1;
-            const lineLength = lines[this.cursor.line].length;
+            const lineLength = this.lines[this.cursor.line].length;
             this.cursor.ch = Math.min(this.desiredColumn, lineLength);
         }
         this.selection = null;
@@ -267,7 +283,7 @@ export class TextEditor {
      * @returns {Object|null}
      */
     getFirstOccurrenceSelection = (word) => {
-        for (let i = 0; i < lines.length; i++) {
+        for (let i = 0; i < this.lines.length; i++) {
             let ch = this.lines[i].indexOf(word);
             if (ch !== -1) {
                 // Ensure full word match
@@ -284,6 +300,80 @@ export class TextEditor {
         return null;
     }
         
+    /**
+     * Converts mouse coordinates to cursor position in text.
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {Object} - {line, ch}
+     */
+    getCursorFromPosition = (x, y, lineHeight, charWidth, startX, startY) => {
+        //const lineHeight = 30; // Must match rendering
+        //const charWidth = textCtx.measureText('M').width; // Monospace
+        //const startX = 10;
+        //const startY = 10;
+
+        let line = Math.floor((y + this.scrollOffset * lineHeight - startY) / lineHeight);
+        line = Math.max(0, Math.min(line, this.lines.length - 1));
+
+        let ch = Math.floor((x - startX) / charWidth);
+        ch = Math.max(0, ch);
+        const lineLength = this.lines[line].length;
+        ch = Math.min(ch, lineLength);
+
+        return { line, ch };
+    }
+
+    /**
+     * Finds the word at the given mouse position.
+     * @param {number} x 
+     * @param {number} y 
+     * @returns {string|null}
+     */
+    getWordAtPosition = (x, y, lineHeight, charWidth, startX, startY) => {
+        const { line, ch } = getCursorFromPosition(x, y, lineHeight, charWidth, startX, startY);
+        const lineText = this.lines[line];
+        if (!lineText) return null;
+
+        // Find word boundaries
+        const start = this.findWordStart(lineText, ch);
+        const end = this.findWordEnd(lineText, ch);
+
+        if (start === end) return null; // No word found
+
+        return lineText.substring(start, end);
+    }
+
+    /**
+     * Finds the start index of a word given a character index.
+     * @param {string} text 
+     * @param {number} ch 
+     * @returns {number}
+     */
+    findWordStart = (text, ch) => {
+        if (ch > text.length) ch = text.length;
+        let start = ch;
+        while (start > 0 && !isDelimiter(text[start - 1])) {
+            start--;
+        }
+        return start;
+    }
+
+    /**
+     * Finds the end index of a word given a character index.
+     * @param {string} text 
+     * @param {number} ch 
+     * @returns {number}
+     */
+    findWordEnd = (text, ch) => {
+        if (ch < 0) ch = 0;
+        let end = ch;
+        while (end < text.length && !isDelimiter(text[end])) {
+            end++;
+        }
+        return end;
+    }
+
+
     /**
      * Copies the selected text to the clipboard.
      */

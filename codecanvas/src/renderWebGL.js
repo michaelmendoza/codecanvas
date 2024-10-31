@@ -1,3 +1,70 @@
+
+export class WebGLRenderer {
+    constructor(canvas, textCanvas) {
+        this.canvas = canvas;
+        this.textCanvas = textCanvas;
+        this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        
+        // Ensure WebGL is available
+        if (!this.gl) {
+            alert("WebGL not supported, please use a different browser.");
+        }
+
+        this.initializeWebGL(this.gl);
+    }
+
+    initializeWebGL = (gl) => {
+        // Compile shaders and create program
+        const program = createProgram(gl, vertexShaderSrc, fragmentShaderSrc);
+        gl.useProgram(program);
+        
+        // Look up attribute and uniform locations    
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        const uvLocation = gl.getAttribLocation(program, 'a_texCoord');
+        const textureLocation = gl.getUniformLocation(program, 'u_texture');
+        const uniforms = { texture: textureLocation }
+        const attributes = { uv: uvLocation, position: positionLocation }
+    
+        // Initialize buffers and attributes
+        initializeBuffers(gl, attributes);
+    
+        // Create and set up texture
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        // Set texture parameters
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    
+        // Set viewport
+        this.gl.viewport(0, 0, this.gl.drawingBufferWidth, this.gl.drawingBufferHeight);
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            this.gl.viewport(0, 0, this.gl.drawingBufferWidth, this.gl.drawingBufferHeight);
+            this.renderAndDraw();
+        });
+
+        // Create references
+        this.uniforms = uniforms;
+        this.attributes = attributes;
+        this.texture = texture;
+    }
+
+    updateTexture = () => {
+        updateTexture(this.gl, this.texture, this.textCanvas)
+    }
+
+    drawScene = () => { 
+        drawScene(this.gl, this.texture, this.uniforms.texture);
+    }
+
+    renderAndDraw = () => {
+        this.updateTexture(this.textCanvas);
+        this.drawScene();
+    }
+}
+
 // Create and compile shader programs
 const vertexShaderSrc = `
     attribute vec2 a_position;
@@ -48,20 +115,9 @@ const createProgram = (gl, vertexSrc, fragmentSrc) => {
     }
     return program;
 }
-    
-export const createCanvasMesh = (gl) => {
 
-    const program = createProgram(gl, vertexShaderSrc, fragmentShaderSrc);
-    gl.useProgram(program);
-    
-    // Look up attribute locations
-    const positionLocation = gl.getAttribLocation(program, 'a_position');
-    const uvLocation = gl.getAttribLocation(program, 'a_texCoord');
-    
-    // Look up uniform locations
-    const textureLocation = gl.getUniformLocation(program, 'u_texture');
-    
-    // Create 2d space geometry positions
+const initializeBuffers = (gl, attributes) => {
+// Create 2d space geometry positions
     const positionBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     const positions = new Float32Array([
@@ -73,7 +129,7 @@ export const createCanvasMesh = (gl) => {
         1,  1,  // Top-right
     ]);
     gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-    
+
     // Create texture coordinates
     const texCoordBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
@@ -86,39 +142,30 @@ export const createCanvasMesh = (gl) => {
         1, 0, // Top-right
     ]);
     gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
-    
+
     // Enable attributes
-    gl.enableVertexAttribArray(positionLocation);
+    gl.enableVertexAttribArray(attributes.position);
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     gl.vertexAttribPointer(
-        positionLocation,
+        attributes.position,
         2,          // size
         gl.FLOAT,   // type
         false,      // normalize
         0,          // stride
         0           // offset
     );
-    
-    gl.enableVertexAttribArray(uvLocation);
+
+    gl.enableVertexAttribArray(attributes.uv);
     gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
     gl.vertexAttribPointer(
-        uvLocation,
+        attributes.uv,
         2,          // size
         gl.FLOAT,   // type
         false,      // normalize
         0,          // stride
         0           // offset
     );
-    
-    // Create texture
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    // Set texture parameters
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-    return { uniforms: { texture: textureLocation }, attributes: { uv: uvLocation, position: positionLocation }, texture };
 }
 
 /**
@@ -136,7 +183,7 @@ const updateTexture = (gl, texture, imageCanvas) => {
 /**
  * Draws the WebGL scene by rendering the textured rectangle.
  */
-const draw = (gl, texture, textureUniform) => {
+const drawScene = (gl, texture, textureUniform) => {
     gl.clearColor(0, 0, 0, 0); // Transparent background
     gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -145,25 +192,4 @@ const draw = (gl, texture, textureUniform) => {
     gl.bindTexture(gl.TEXTURE_2D, texture);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
-}
-
-export class WebGLRenderer {
-    constructor(gl) {
-        this.gl = gl;
-        const webglcanvas = createCanvasMesh(gl);
-        Object.assign(this, webglcanvas);
-    }
-
-    updateTexture = (imageCanvas) => {
-        updateTexture(this.gl,this.texture, imageCanvas)
-    }
-
-    drawScene = () => { 
-        draw(this.gl, this.texture, this.uniforms.texture);
-    }
-
-    renderAndDraw = (imageCanvas) => {
-        this.updateTexture(imageCanvas);
-        this.drawScene();
-    }
 }

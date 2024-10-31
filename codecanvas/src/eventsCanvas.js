@@ -86,6 +86,8 @@ export const initializeCanvasEvents = (codecanvas) => {
             e.preventDefault();
         }
 
+        codecanvas.editor.pauseCaretBlinking();
+        codecanvas.renderTextCanvas(); 
         codecanvas.webglRenderer.renderAndDraw();
     });
      

@@ -11,6 +11,7 @@ export class TextEditor {
         this.desiredColumn = this.cursor.ch;                    // Desired column for vertical cursor movements
         this.caretVisible = true;                               // Blinking caret  
         this.blinkInterval = 500;                               // Blinking caret interval
+        this.renderCallback = () => {};                         // Callback for rendering blinking caret
         this.isSelecting = false;                               // Mouse selection state    
         this.scrollOffset = 0;                                  // Scrolling - Number of lines scrolled from top
         this.visibleLines = 0;                                  // Will be calculated based on canvas size
@@ -19,14 +20,26 @@ export class TextEditor {
     }
 
     startCaretBlinking(renderCallback) {
-        this.caretBlinkIntervalId = setInterval(() => {
-            this.caretVisible = !this.caretVisible;
-            renderCallback();
-        }, this.blinkInterval);
+        this.renderCallback = renderCallback;
+        this.setCaretBlinking();
     }
 
     stopCaretBlinking() {
         clearInterval(this.caretBlinkIntervalId);
+    }
+
+    pauseCaretBlinking() {
+        this.stopCaretBlinking();
+        this.caretVisible = true;
+        this.renderCallback();
+        this.setCaretBlinking();
+    }
+
+    setCaretBlinking() {
+        this.caretBlinkIntervalId = setInterval(() => {
+            this.caretVisible = !this.caretVisible;
+            this.renderCallback();
+        }, this.blinkInterval);
     }
 
     /**
@@ -47,7 +60,6 @@ export class TextEditor {
         this.cursor.ch += text.length;
         this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
-        //renderAndDraw();
     }    
 
     /**
@@ -69,7 +81,6 @@ export class TextEditor {
         this.cursor.ch = 0;
         this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
-        //renderAndDraw();
     }
     
     /**
@@ -113,7 +124,6 @@ export class TextEditor {
             }
         }
         this.clearHighlights();
-        //renderAndDraw();
     }
 
     /**
@@ -155,7 +165,6 @@ export class TextEditor {
         }
         this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
-        //renderAndDraw();
     }
     
     /**
@@ -173,7 +182,6 @@ export class TextEditor {
         }
         this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
-        //renderAndDraw();
     }
     
     /**
@@ -187,7 +195,6 @@ export class TextEditor {
         }
         this.selection = null;
         this.clearHighlights();
-        //renderAndDraw();
     }
     
     /**
@@ -201,7 +208,6 @@ export class TextEditor {
         }
         this.selection = null;
         this.clearHighlights();
-        //renderAndDraw();
     }
     
     /**
@@ -215,7 +221,6 @@ export class TextEditor {
         this.cursor = { line: this.lines.length - 1, ch: this.lines[this.lines.length - 1].length };
         this.desiredColumn = this.cursor.ch;
         this.highlightAllOccurrences(); // Highlight all since all text is selected
-        //renderAndDraw();
     }
     
     /**

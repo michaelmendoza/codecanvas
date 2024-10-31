@@ -161,7 +161,7 @@ export class TextEditor {
             this.cursor.ch -= 1;
         } else if (this.cursor.line > 0) {
             this.cursor.line -= 1;
-            this.cursor.ch = lines[this.cursor.line].length;
+            this.cursor.ch = this.lines[this.cursor.line].length;
         }
         this.desiredColumn = this.cursor.ch;
         this.clearHighlights();
@@ -311,12 +311,8 @@ export class TextEditor {
      * @param {number} y 
      * @returns {Object} - {line, ch}
      */
-    getCursorFromPosition = (x, y, lineHeight, charWidth, startX, startY) => {
-        //const lineHeight = 30; // Must match rendering
-        //const charWidth = textCtx.measureText('M').width; // Monospace
-        //const startX = 10;
-        //const startY = 10;
-
+    getCursorFromPosition = (x, y, canvasRenderer) => {
+        const { lineHeight, charWidth, startX, startY } = canvasRenderer;
         let line = Math.floor((y + this.scrollOffset * lineHeight - startY) / lineHeight);
         line = Math.max(0, Math.min(line, this.lines.length - 1));
 
@@ -334,8 +330,8 @@ export class TextEditor {
      * @param {number} y 
      * @returns {string|null}
      */
-    getWordAtPosition = (x, y, lineHeight, charWidth, startX, startY) => {
-        const { line, ch } = getCursorFromPosition(x, y, lineHeight, charWidth, startX, startY);
+    getWordAtPosition = (x, y, canvasRenderer) => {
+        const { line, ch } = this.getCursorFromPosition(x, y, canvasRenderer);
         const lineText = this.lines[line];
         if (!lineText) return null;
 

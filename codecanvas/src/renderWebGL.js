@@ -1,9 +1,9 @@
 
 export class WebGLRenderer {
-    constructor(canvas, textCanvas) {
-        this.canvas = canvas;
-        this.textCanvas = textCanvas;
-        this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    constructor(codecanvas) {
+        this.canvas = codecanvas.canvas;
+        this.textCanvas = codecanvas.canvasRenderer.textCanvas;
+        this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
         
         // Ensure WebGL is available
         if (!this.gl) {
@@ -11,6 +11,7 @@ export class WebGLRenderer {
         }
 
         this.initializeWebGL(this.gl);
+        this.render();
     }
 
     initializeWebGL = (gl) => {
@@ -42,7 +43,7 @@ export class WebGLRenderer {
         // Handle window resize
         window.addEventListener('resize', () => {
             this.gl.viewport(0, 0, this.gl.drawingBufferWidth, this.gl.drawingBufferHeight);
-            this.renderAndDraw();
+            this.render();
         });
 
         // Create references
@@ -59,7 +60,7 @@ export class WebGLRenderer {
         drawScene(this.gl, this.texture, this.uniforms.texture);
     }
 
-    renderAndDraw = () => {
+    render = () => {
         this.updateTexture(this.textCanvas);
         this.drawScene();
     }

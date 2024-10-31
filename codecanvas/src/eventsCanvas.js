@@ -1,5 +1,4 @@
 import { TextEditor } from "./editor";
-import { isDelimiter } from "./utils";
 
 export class CanvasEvents {
     constructor(codecanvas) {
@@ -15,14 +14,28 @@ export class CanvasEvents {
  */
 export const initializeCanvasEvents = (codecanvas) => {
 
-    // Make the canvas focusable and focus it
     const canvas = codecanvas.canvas;
     const editor = codecanvas.editor;
+    const canvasRenderer = codecanvas.canvasRenderer;
+    const webglRenderer = codecanvas.webglRenderer;
 
     // Make the canvas focusable and focus it
     canvas.setAttribute('tabindex', '0');
     canvas.focus();
     
+    /**
+     * Gets the mouse position relative to the canvas.
+     * @param {MouseEvent} e 
+     * @returns {Object} - {x, y}
+     */
+    const getMousePosition = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+    }
+
     // Handle keyboard events
     canvas.addEventListener('keydown', async (e) => {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -86,65 +99,71 @@ export const initializeCanvasEvents = (codecanvas) => {
             e.preventDefault();
         }
 
-        codecanvas.editor.pauseCaretBlinking();
-        codecanvas.renderTextCanvas(); 
-        codecanvas.webglRenderer.renderAndDraw();
+        editor.pauseCaretBlinking();
+        canvasRenderer.render(); 
+        webglRenderer.render();
     });
      
     // Handle mouse events for editor.cursor positioning and text selection
     canvas.addEventListener('mousedown', (e) => {
         const pos = getMousePosition(e);
-        const newCursor = getCursorFromPosition(pos.x, pos.y);
+        console.log(pos.x, pos.y);
+        const newCursor = editor.getCursorFromPosition(pos.x, pos.y, canvasRenderer);
         editor.cursor = newCursor;
         editor.selection = { start: { ...editor.cursor }, end: { ...editor.cursor } };
-        codecanvas.isSelecting = true;
+        editor.isSelecting = true;
         editor.desiredColumn = editor.cursor.ch;
-        clearHighlights();
-        codecanvas.webglRenderer.renderAndDraw();
+        editor.clearHighlights();
+        canvasRenderer.render();
+        webglRenderer.render();
     });
     
     canvas.addEventListener('mousemove', (e) => {
-        if (codecanvas.isSelecting) {
+        if (editor.isSelecting) {
             const pos = getMousePosition(e);
-            const newCursor = getCursorFromPosition(pos.x, pos.y);
+            const newCursor = editor.getCursorFromPosition(pos.x, pos.y, canvasRenderer);
             editor.cursor = newCursor;
             editor.selection.end = { ...editor.cursor };
             editor.desiredColumn = editor.cursor.ch;
-            clearHighlights();
-            codecanvas.webglRenderer.renderAndDraw();
+            editor.clearHighlights();
+            canvasRenderer.render();
+            webglRenderer.render();
         }
     });
     
     canvas.addEventListener('mouseup', (e) => {
-        if (codecanvas.isSelecting) {
-            codecanvas.isSelecting = false;
+        if (editor.isSelecting) {
+            editor.isSelecting = false;
             // If editor.selection start and end are the same, remove editor.selection
             if (editor.selection.start.line === editor.selection.end.line && editor.selection.start.ch === editor.selection.end.ch) {
                 editor.selection = null;
             }
-            codecanvas.webglRenderer.renderAndDraw();
+            canvasRenderer.render();
+            webglRenderer.render();
         }
     });
     
     canvas.addEventListener('mouseleave', (e) => {
-        if (codecanvas.isSelecting) {
-            codecanvas.isSelecting = false;
+        if (editor.isSelecting) {
+            editor.isSelecting = false;
             // If editor.selection start and end are the same, remove editor.selection
             if (editor.selection.start.line === editor.selection.end.line && editor.selection.start.ch === editor.selection.end.ch) {
                 editor.selection = null;
             }
-            codecanvas.webglRenderer.renderAndDraw();
+            canvasRenderer.render();
+            webglRenderer.render();
         }
     });
     
     // Handle double-click for word selection and highlighting all occurrences
     canvas.addEventListener('dblclick', (e) => {
         const pos = getMousePosition(e);
-        const word = getWordAtPosition(pos.x, pos.y, lineHeight, charWidth, startX, startY);
+        const word = editor.getWordAtPosition(pos.x, pos.y, canvasRenderer);
         if (word) {
             editor.selection = editor.getFirstOccurrenceSelection(word);
             editor.highlightAllOccurrences(word);
-            codecanvas.webglRenderer.renderAndDraw();
+            canvasRenderer.render();
+            webglRenderer.render();
         }
     });
     

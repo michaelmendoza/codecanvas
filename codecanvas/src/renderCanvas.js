@@ -4,17 +4,25 @@ import { normalizeSelection } from "./utils";
 export class CanvasRenderer {
     constructor(codecanvas) {
     
-        this.fontSize = 24;
-        this.lineHeight = this.fontSize * 1.25;
-        this.startX = 10;
-        this.startY = 10;
-        this.caretOffsetY = -5;
-        this.textCanvas = document.createElement('canvas');
-        this.textCtx = this.textCanvas.getContext('2d'); 
-
+        // Set CodeCanvas properties
         this.codecanvas = codecanvas;
         this.currentTheme = codecanvas.currentTheme;
         this.editor = codecanvas.editor;
+
+        // Set text rendering properties
+        this.devicePixelRatio = window.devicePixelRatio || 1;
+
+        this.fontSize = 16 * this.devicePixelRatio;
+        this.lineHeight = this.fontSize * 1.25;
+        this.startX = 10 * this.devicePixelRatio;
+        this.startY = 10 * this.devicePixelRatio;
+        this.caretOffsetY = -0.15 * this.lineHeight;
+
+        // Create offscreen canvas and context
+        this.textCanvas = document.createElement('canvas');
+        this.textCtx = this.textCanvas.getContext('2d'); 
+
+        // Initialize canvas and render
         this.init();
         this.render();
     }
@@ -31,14 +39,29 @@ export class CanvasRenderer {
      * Initializes the canvases and sets up their sizes.
      */
     init = () => {
+
+        const canvasWidth = this.codecanvas.canvas.clientWidth;
+        const canvasHeight = this.codecanvas.canvas.clientHeight;
+
         // Set WebGL canvas size
-        this.codecanvas.canvas.width = this.codecanvas.canvas.clientWidth;
-        this.codecanvas.canvas.height = this.codecanvas.canvas.clientHeight;
+        this.codecanvas.canvas.width = canvasWidth * this.devicePixelRatio;
+        this.codecanvas.canvas.height = canvasHeight * this.devicePixelRatio;
     
+        // Set CSS size to desired size
+        this.codecanvas.canvas.style.width = `${canvasWidth}px`;
+        this.codecanvas.canvas.style.height = `${canvasHeight}px`;
+
         // Set offscreen canvas size to match WebGL canvas size for correct aspect ratio
-        this.textCanvas.width = this.codecanvas.canvas.width;
-        this.textCanvas.height = this.codecanvas.canvas.height;
+        this.textCanvas.width = this.codecanvas.canvas.width * this.devicePixelRatio;
+        this.textCanvas.height = this.codecanvas.canvas.height * this.devicePixelRatio;
     
+        // Set CSS size for the offscreen canvas
+        this.textCanvas.style.width = `${canvasWidth}px`;
+        this.textCanvas.style.height = `${canvasHeight}px`;
+
+        // Set canvas scaling
+        this.textCtx.scale(this.devicePixelRatio, this.devicePixelRatio);
+
         // Set text rendering properties
         this.textCtx.textBaseline = 'top';
         this.textCtx.font = `${this.fontSize}px monospace`;
@@ -120,10 +143,8 @@ export class CanvasRenderer {
      */
     getCaretCoordinates = () => {
         const { line, ch } = this.editor.cursor;
-        const lineText = this.editor.lines[line] || '';
-        const charWidth = this.textCtx.measureText('M').width; // Monospace
-        const x = 10 + ch * charWidth;
-        const y = 10 + line * this.lineHeight - this.editor.scrollOffset * this.lineHeight;
+        const x = this.startX + ch * this.charWidth;
+        const y = this.startY + line * this.lineHeight - this.editor.scrollOffset * this.lineHeight;
         return { x, y };
     }
 

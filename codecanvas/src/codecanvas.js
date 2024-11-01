@@ -3,6 +3,7 @@ import { CanvasEvents } from "./eventsCanvas";
 import { themes } from "./themes";
 import { WebGLRenderer } from "./renderWebGL";
 import { CanvasRenderer } from "./renderCanvas";
+import { UndoManager } from "./undoManager";
 
 export class CodeCanvas {
 
@@ -21,8 +22,9 @@ export class CodeCanvas {
 
         this.canvasId = canvasId;
         this.canvas = document.getElementById(canvasId);
-        this.currentTheme = themes.monokai;
+        this.currentTheme = { ...themes.monokai };
         this.editor = new TextEditor(initialCode);
+        this.undoManager = new UndoManager(this.editor);
         this.canvasRenderer = new CanvasRenderer(this);
         this.webglRenderer = new WebGLRenderer(this);
         this.canvasEvents = new CanvasEvents(this);
@@ -39,5 +41,11 @@ export class CodeCanvas {
             this.canvasRenderer.render();
             this.webglRenderer.render();
         });
+    }
+
+    setTheme(theme) {
+        Object.assign(this.currentTheme, themes[theme]);
+        this.canvasRenderer.render();
+        this.webglRenderer.render();
     }
 }

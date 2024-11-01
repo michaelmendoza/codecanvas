@@ -36,3 +36,9 @@ document.querySelector('#app').innerHTML = `
 
 const codeCanvas = new CodeCanvas();
 console.log(codeCanvas);
+
+const themeSelect = document.getElementById('themeSelect');
+themeSelect.addEventListener('change', (e) => {
+  const selectedTheme = e.target.value;
+  codeCanvas.setTheme(selectedTheme);
+});

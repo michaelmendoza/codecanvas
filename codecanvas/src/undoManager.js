@@ -2,7 +2,6 @@
 export class UndoManager {
     constructor(textEditor) {
         this.textEditor = textEditor;
-
         this.undoStack = [];
         this.redoStack = [];
         this.maxStackSize = 100; // Limit undo stack size
@@ -47,8 +46,6 @@ export class UndoManager {
             start: { ...prevState.selection.start },
             end: { ...prevState.selection.end }
         } : null;
-        //clearHighlights();
-        //renderAndDraw();
     }
 
     /** Performs the redo operation. */
@@ -71,7 +68,5 @@ export class UndoManager {
             start: { ...nextState.selection.start },
             end: { ...nextState.selection.end }
         } : null;
-        //clearHighlights();
-        //renderAndDraw();
     }
 }

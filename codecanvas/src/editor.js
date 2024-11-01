@@ -15,8 +15,6 @@ export class TextEditor {
         this.isSelecting = false;                               // Mouse selection state    
         this.scrollOffset = 0;                                  // Scrolling - Number of lines scrolled from top
         this.visibleLines = 0;                                  // Will be calculated based on canvas size
-
-        this.undo = new UndoManager(this);
     }
 
     startCaretBlinking(renderCallback) {
@@ -46,10 +44,7 @@ export class TextEditor {
      * Inserts text at the current cursor position, replacing the selection if any.
      * @param {string} text 
      */
-    insertText = (text) => {
-        // Save state for undo
-        this.undo.saveState();
-    
+    insertText = (text) => {    
         if (this.selection) {
             this.deleteSelection();
         }
@@ -65,10 +60,7 @@ export class TextEditor {
     /**
      * Inserts a new line at the current cursor position, splitting the current line.
      */
-    insertNewLine = () => {
-        // Save state for undo
-        this.undo.saveState();
-    
+    insertNewLine = () => {    
         if (this.selection) {
             this.deleteSelection();
         }
@@ -87,10 +79,7 @@ export class TextEditor {
      * Deletes a character before or after the cursor.
      * @param {boolean} forward - If true, delete after the cursor (Delete key). If false, delete before (Backspace key).
      */
-    deleteCharacter = (forward) => {
-        // Save state for undo
-        this.undo.saveState();
-    
+    deleteCharacter = (forward) => {    
         if (this.selection) {
             this.deleteSelection();
             return;
@@ -129,10 +118,7 @@ export class TextEditor {
     /**
      * Deletes the currently selected text.
      */
-    deleteSelection = () => {
-        // Save state for undo
-        this.undo.saveState();
-    
+    deleteSelection = () => {    
         const { start, end } = normalizeSelection(this.selection);
         if (start.line === end.line) {
             const line = this.lines[start.line];
@@ -373,58 +359,6 @@ export class TextEditor {
             end++;
         }
         return end;
-    }
-
-
-    /**
-     * Copies the selected text to the clipboard.
-     */
-    copySelection = async () => {
-        if (!this.selection) return;
-        const { start, end } = normalizeSelection(this.selection);
-        let selectedText = '';
-        for (let i = start.line; i <= end.line; i++) {
-            const lineText = this.lines[i];
-            const startCh = (i === start.line) ? start.ch : 0;
-            const endCh = (i === end.line) ? end.ch : lineText.length;
-            selectedText += lineText.substring(startCh, endCh);
-            if (i !== end.line) selectedText += '\n';
-        }
-        try {
-            await navigator.clipboard.writeText(selectedText);
-            console.log('Copied to clipboard:', selectedText);
-        } catch (err) {
-            console.error('Failed to copy:', err);
-        }
-    }
-
-    /**
-     * Cuts the selected text to the clipboard and removes it from the document.
-     */
-    cutSelection = async () => {
-        if (!this.selection) return;
-        await this.copySelection();
-        this.deleteSelection();
-    }
-
-    /**
-     * Pastes text from the clipboard at the current cursor position.
-     */
-    pasteText = async () => {
-        try {
-            const text = await navigator.clipboard.readText();
-            if (text) {
-                // Save state for undo
-                this.undo.saveState();
-
-                if (this.selection) {
-                    this.deleteSelection();
-                }
-                this.insertText(text);
-            }
-        } catch (err) {
-            console.error('Failed to paste:', err);
-        }
     }
 
 }

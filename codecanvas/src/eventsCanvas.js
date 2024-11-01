@@ -1,8 +1,11 @@
 import { TextEditor } from "./editor";
+import { normalizeSelection } from "./utils";
 
 export class CanvasEvents {
     constructor(codecanvas) {
         this.codecanvas = codecanvas;
+        this.editor = codecanvas.editor;
+        this.undoManager = codecanvas.undoManager;
 
         this.wheelSensitivity = 0.5;
         this.initializeCanvasEvents(codecanvas);
@@ -26,44 +29,42 @@ export class CanvasEvents {
         
         // Handle keyboard events
         canvas.addEventListener('keydown', async (e) => {
+            e.preventDefault();
+            
             const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
             const ctrlKey = isMac ? e.metaKey : e.ctrlKey;
             console.log('keydown:' + e.key);
 
             if (e.key.length === 1 && !ctrlKey && !e.altKey && !e.metaKey) {
-                // Insert character
+                this.undoManager.saveState();
                 editor.insertText(e.key);
-                e.preventDefault();
             } else if (e.key === 'Backspace') {
+                this.undoManager.saveState();
                 editor.deleteCharacter(false);
                 if (editor.cursor.line < canvasRenderer.visibleLines - 1 + editor.scrollOffset) {
                     editor.scrollOffset = Math.max(0, editor.cursor.line - canvasRenderer.visibleLines + 1);
                 }
-                e.preventDefault();
             } else if (e.key === 'Delete') {
+                this.undoManager.saveState();
                 editor.deleteCharacter(true);
                 if (editor.cursor.line < canvasRenderer.visibleLines - 1 + editor.scrollOffset) {
                     editor.scrollOffset = Math.max(0, editor.cursor.line - canvasRenderer.visibleLines + 1);
                 }
-                e.preventDefault();
             } else if (e.key === 'Enter') {
+                this.undoManager.saveState();
                 editor.insertNewLine();
                 if (editor.cursor.line > canvasRenderer.visibleLines - 1) {
                     editor.scrollOffset = Math.min(editor.cursor.line - canvasRenderer.visibleLines + 1, editor.lines.length - canvasRenderer.visibleLines);
                 }
-                e.preventDefault();
             } else if (e.key === 'Tab') {
+                this.undoManager.saveState();
                 editor.insertText('    '); // Insert four spaces
-                e.preventDefault();
             } else if (e.key === 'ArrowLeft') {
                 editor.moveCursorLeft();
-                e.preventDefault();
             } else if (e.key === 'ArrowRight') {
                 editor.moveCursorRight();
-                e.preventDefault();
             } else if (e.key === 'ArrowUp') {
                 editor.moveCursorUp();
-                e.preventDefault();
                 if (editor.cursor.line < canvasRenderer.visibleLines - 1 + editor.scrollOffset) {
                     editor.scrollOffset = Math.max(0, editor.cursor.line - canvasRenderer.visibleLines + 1);
                 }
@@ -72,34 +73,28 @@ export class CanvasEvents {
                 if (editor.cursor.line > canvasRenderer.visibleLines - 1) {
                     editor.scrollOffset = Math.min(editor.cursor.line - canvasRenderer.visibleLines + 1, editor.lines.length - canvasRenderer.visibleLines);
                 }
-                e.preventDefault();
             } else if (ctrlKey && e.key.toLowerCase() === 'a') {
                 // Select All
                 editor.selectAll();
-                e.preventDefault();
             } else if (ctrlKey && e.key.toLowerCase() === 'c') {
                 // Copy
-                await editor.copySelection();
-                e.preventDefault();
+                await this.copySelection();
             } else if (ctrlKey && e.key.toLowerCase() === 'x') {
                 // Cut
-                await editor.cutSelection();
-                e.preventDefault();
+                this.undoManager.saveState();
+                await this.cutSelection();
             } else if (ctrlKey && e.key.toLowerCase() === 'v') {
                 // Paste
-                await editor.pasteText();
-                e.preventDefault();
+                this.undoManager.saveState();
+                await this.pasteText();
             } else if (ctrlKey && e.key.toLowerCase() === 'z') {
                 // Undo
-                editor.undo.undo();
-                e.preventDefault();
-            } else if (ctrlKey && (e.key.toLowerCase() === 'y' || (isMac && e.shiftKey && e.key.toLowerCase() === 'z'))) {
+                this.undoManager.undo();
+            } else if (ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
                 // Redo
-                editor.undo.redo();
-                e.preventDefault();
+                this.undoManager.redo();
             } else if (ctrlKey && e.key.toLowerCase() === 's') {
                 // Prevent default Save dialog
-                e.preventDefault();
             }
 
             editor.pauseCaretBlinking();
@@ -201,6 +196,57 @@ export class CanvasEvents {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         };
+    }
+
+    /**
+     * Copies the selected text to the clipboard.
+     */
+    copySelection = async () => {
+        if (!this.editor.selection) return;
+        const { start, end } = normalizeSelection(this.editor.selection);
+        let selectedText = '';
+        for (let i = start.line; i <= end.line; i++) {
+            const lineText = this.editor.lines[i];
+            const startCh = (i === start.line) ? start.ch : 0;
+            const endCh = (i === end.line) ? end.ch : lineText.length;
+            selectedText += lineText.substring(startCh, endCh);
+            if (i !== end.line) selectedText += '\n';
+        }
+        try {
+            await navigator.clipboard.writeText(selectedText);
+            console.log('Copied to clipboard:', selectedText);
+        } catch (err) {
+            console.error('Failed to copy:', err);
+        }
+    }
+
+    /**
+     * Cuts the selected text to the clipboard and removes it from the document.
+     */
+    cutSelection = async () => {
+        if (!this.editor.selection) return;
+        await this.editor.copySelection();
+        this.editor.deleteSelection();
+    }
+
+    /**
+     * Pastes text from the clipboard at the current cursor position.
+     */
+    pasteText = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                // Save state for undo
+                this.undoManager.saveState();
+
+                if (this.editor.selection) {
+                    this.editor.deleteSelection();
+                }
+                this.editor.insertText(text);
+            }
+        } catch (err) {
+            console.error('Failed to paste:', err);
+        }
     }
 
 }

@@ -25,9 +25,9 @@ document.querySelector('#app').innerHTML = `
     <div id="settingsPanel">
         <label for="themeSelect">Theme:</label>
         <select id="themeSelect">
-            <option value="monokai">Monokai</option>
-            <option value="light">Light</option>
             <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="monokai">Monokai</option>
         </select>
     </div>
 `

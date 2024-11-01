@@ -2,7 +2,7 @@ import { tokenizePython } from "./tokenizer";
 import { normalizeSelection } from "./utils";
 
 export class CanvasRenderer {
-    constructor(codecanvas) {
+    constructor(codecanvas, fontSize) {
     
         // Set CodeCanvas properties
         this.codecanvas = codecanvas;
@@ -12,8 +12,9 @@ export class CanvasRenderer {
         // Set text rendering properties
         this.devicePixelRatio = window.devicePixelRatio || 1;
 
-        this.fontSize = 16 * this.devicePixelRatio;
-        this.lineHeight = this.fontSize * 1.25;
+        this.fontSize = fontSize;
+        this.scaledFontSize = fontSize * this.devicePixelRatio;
+        this.lineHeight = this.scaledFontSize * 1.25;
         this.startX = 10 * this.devicePixelRatio;
         this.startY = 10 * this.devicePixelRatio;
         this.caretOffsetY = -0.15 * this.lineHeight;
@@ -33,6 +34,13 @@ export class CanvasRenderer {
 
     get visibleLines () {
         return Math.floor(this.textCanvas.height / this.lineHeight);
+    }
+
+    /** Updates text rendering properties based on fontsize */
+    setFontSize = (fontSize) => {
+        this.scaledFontSize = fontSize * this.devicePixelRatio;
+        this.lineHeight = this.scaledFontSize * 1.25;
+        this.caretOffsetY = -0.15 * this.lineHeight;
     }
 
     /**
@@ -64,7 +72,7 @@ export class CanvasRenderer {
 
         // Set text rendering properties
         this.textCtx.textBaseline = 'top';
-        this.textCtx.font = `${this.fontSize}px monospace`;
+        this.textCtx.font = `${this.scaledFontSize}px monospace`;
     }
 
     /**

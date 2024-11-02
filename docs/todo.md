@@ -1,5 +1,6 @@
 # CodeCanvas TODO
 - [ ] Add a 3D example of CodeCanvas in a 3D game
+- [ ] Add plugin system: allow users to add custom features and functionality. Plugins could be used to add functionalities like linting, auto-completion, or integrations with version control systems.
 - [ ] Add Syntax Highlighting for JavaScript
 - [ ] Add Syntax Highlighting for Go
 - [ ] Add Basic Auto-Completion and IntelliSense
@@ -14,6 +15,7 @@
 - [ ] Add keyboard shortcuts for common actions
 - [ ] Add a real-time collaboration feature
 - [ ] Add version control integration with Git or local version control sytstem
+- [ ] Add a terminal emulator
 
 # CodeCanvas Changelog
 

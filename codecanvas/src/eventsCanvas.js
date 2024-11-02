@@ -229,7 +229,7 @@ export class CanvasEvents {
      */
     cutSelection = async () => {
         if (!this.editor.selection) return;
-        await this.editor.copySelection();
+        await this.copySelection();
         this.editor.deleteSelection();
     }
 

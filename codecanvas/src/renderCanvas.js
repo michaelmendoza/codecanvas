@@ -15,7 +15,8 @@ export class CanvasRenderer {
         this.fontSize = fontSize;
         this.scaledFontSize = fontSize * this.devicePixelRatio;
         this.lineHeight = this.scaledFontSize * 1.25;
-        this.startX = 10 * this.devicePixelRatio;
+        this.lineNumberWidth = 50;
+        this.startX = (10 + this.lineNumberWidth) * this.devicePixelRatio;
         this.startY = 10 * this.devicePixelRatio;
         this.caretOffsetY = -0.15 * this.lineHeight;
 
@@ -33,7 +34,7 @@ export class CanvasRenderer {
     }
 
     get visibleLines () {
-        return Math.floor(this.textCanvas.height / this.lineHeight);
+        return Math.floor(this.textCanvas.height / this.lineHeight / this.devicePixelRatio) - 1;
     }
 
     /** Updates text rendering properties based on fontsize */
@@ -122,10 +123,30 @@ export class CanvasRenderer {
             const tokens = tokenizePython(this.editor.lines[i]);
             let x = this.startX;
             tokens.forEach(token => {
+                this.textCtx.textAlign = "left";
                 this.textCtx.fillStyle = this.currentTheme.syntax[token.type] || this.currentTheme.syntax.default;
                 this.textCtx.fillText(token.value, x, y);
                 x += this.textCtx.measureText(token.value).width;
             });
+        }
+
+        // Loop through visible lines and draw line numbers
+        for (let i = 0; i < this.editor.lines.length; i++) {
+            const y = this.startY + i * this.lineHeight - this.editor.scrollOffset * this.lineHeight;
+            if (y + this.lineHeight < 0 || y > this.textCanvas.height) continue; // Skip lines outside the viewport
+
+            const lineNumber = (i + 1).toString();
+            const x = this.startX - this.lineNumberWidth; 
+
+            // Draw the line number
+            this.textCtx.textAlign = "right";
+            if (i === this.editor.cursor.line) {
+                this.textCtx.fillStyle = this.currentTheme.activeLineNumberColor || '#EEE';
+            }
+            else {
+                this.textCtx.fillStyle = this.currentTheme.lineNumberColor || '#888';
+            }
+            this.textCtx.fillText(lineNumber, x, y);
         }
 
         // Draw the caret if visible and within the viewport
@@ -161,14 +182,17 @@ export class CanvasRenderer {
      */
     drawScrollbar = () => {
         const scrollbarWidth = 10;
-        const totalHeight = this.editor.lines.length * 30;
-        const visibleHeight = this.textCanvas.height;
+        const scrollbarPadding = { x: 5, y: 5 };
+        const totalHeight = this.editor.lines.length * this.lineHeight;
+        const visibleHeight = this.visibleLines * this.lineHeight;
+        const visibleWidth = this.textCanvas.width / this.devicePixelRatio;
+        const canvasHeight = this.textCanvas.height / this.devicePixelRatio;
 
         if (totalHeight > visibleHeight) {
-            const scrollbarHeight = Math.max((visibleHeight / totalHeight) * visibleHeight, 20);
-            const scrollbarY = (this.editor.scrollOffset / (this.editor.lines.length - Math.floor(visibleHeight / 30))) * (visibleHeight - scrollbarHeight);
+            const scrollbarHeight = Math.max((visibleHeight / totalHeight) * canvasHeight, 20);
+            const scrollbarY = (this.editor.scrollOffset / (this.editor.lines.length - Math.floor(visibleHeight / this.lineHeight))) * (canvasHeight - scrollbarHeight);
             this.textCtx.fillStyle = 'rgba(128, 128, 128, 0.5)';
-            this.textCtx.fillRect(this.textCanvas.width - scrollbarWidth - 5, scrollbarY + 10, scrollbarWidth, scrollbarHeight);
+            this.textCtx.fillRect(visibleWidth - scrollbarWidth - scrollbarPadding.x, scrollbarY + scrollbarPadding.y, scrollbarWidth, scrollbarHeight - 2 * scrollbarPadding.y);
         }
     }
 }

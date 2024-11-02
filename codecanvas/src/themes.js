@@ -6,6 +6,8 @@ export const themes = {
         caret: '#F8F8F0',
         selection: 'rgba(101, 123, 131, 0.3)',
         highlight: 'rgba(248, 195, 113, 0.3)',
+        lineNumberColor: '#75715E',
+        activeLineNumberColor: '#F8F8F2',
         syntax: {
             keyword: '#F92672',
             string: '#E6DB74',
@@ -23,6 +25,8 @@ export const themes = {
         caret: '#000000',
         selection: 'rgba(173, 216, 230, 0.3)',
         highlight: 'rgba(144, 238, 144, 0.3)',
+        lineNumberColor: '#999999',
+        activeLineNumberColor: '#000000',
         syntax: {
             keyword: '#0000FF',
             string: '#008000',
@@ -40,6 +44,8 @@ export const themes = {
         caret: '#FFFFFF',
         selection: 'rgba(255, 255, 255, 0.2)',
         highlight: 'rgba(255, 255, 255, 0.1)',
+        lineNumberColor: '#555555',
+        activeLineNumberColor: '#CCCCCC',
         syntax: {
             keyword: '#569CD6',
             string: '#CE9178',

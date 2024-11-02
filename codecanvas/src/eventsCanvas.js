@@ -7,7 +7,7 @@ export class CanvasEvents {
         this.editor = codecanvas.editor;
         this.undoManager = codecanvas.undoManager;
 
-        this.wheelSensitivity = 0.5;
+        this.wheelSensitivity = 1;
         this.initializeCanvasEvents(codecanvas);
     }
 
@@ -177,7 +177,7 @@ export class CanvasEvents {
             e.preventDefault();
             const delta = Math.sign(e.deltaY) * this.wheelSensitivity;
             editor.scrollOffset += delta;
-            editor.scrollOffset = Math.max(0, Math.min(editor.scrollOffset, editor.lines.length - Math.floor(canvasRenderer.textCanvas.height / 30)));            
+            editor.scrollOffset = Math.max(0, Math.min(editor.scrollOffset, editor.lines.length - canvasRenderer.visibleLines));            
             canvasRenderer.render();
             webglRenderer.render();
         }, { passive: false });

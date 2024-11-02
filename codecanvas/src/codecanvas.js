@@ -12,7 +12,7 @@ export class CodeCanvas {
         const {
             canvasId = 'glCanvas',
             theme = 'dark',
-            fontsize = 16,
+            fontsize = 14,
             initialCode = [
                 '# Welcome to CodeCanvas',
                 '',
